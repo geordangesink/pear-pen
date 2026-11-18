@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10" xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10" xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities" IgnorableNamespaces="rescap">
+  <Identity Name="PearPen" Version="1.0.0.0" Publisher="CN=PearPen" ProcessorArchitecture="x64" />
+  <Properties><DisplayName>Pear Pen</DisplayName><PublisherDisplayName>Pear Pen</PublisherDisplayName><Description>Sign together.</Description><Logo>assets\StoreLogo.png</Logo></Properties>
+  <Resources><Resource Language="en-US" /></Resources>
+  <Dependencies><TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.19045.0" MaxVersionTested="10.0.19045.0" /></Dependencies>
+  <Capabilities><rescap:Capability Name="runFullTrust" /><rescap:Capability Name="packageManagement" /></Capabilities>
+  <Applications><Application Id="App" Executable="app\PearPen.exe" EntryPoint="Windows.FullTrustApplication"><uap:VisualElements DisplayName="Pear Pen" Description="Sign together." Square150x150Logo="assets\Square150x150Logo.png" Square44x44Logo="assets\Square44x44Logo.png" BackgroundColor="transparent" /></Application></Applications>
+</Package>

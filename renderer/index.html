@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <title>Pear Pen</title>
+    <link rel="stylesheet" href="style.css" />
+    <script src="views.js" defer></script>
+    <script src="app.js" defer></script>
+  </head>
+  <body>
+    <div id="app">
+      <div class="loading">
+        <img src="../assets/mark.svg" alt="" /><span>Opening your pens…</span>
+      </div>
+    </div>
+    <div id="modal-root"></div>
+    <div id="toast" role="status"></div>
+  </body>
+</html>
