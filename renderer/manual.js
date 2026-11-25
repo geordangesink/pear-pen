@@ -158,7 +158,7 @@ const PenManual = (() => {
         )
         break
       case 'confirmation':
-        body = field('confirmation', 'Type CONFIRM to commit', 'CONFIRM', {
+        body = field('confirmation', 'Type COMMIT to publish', 'COMMIT', {
           note: modal.pasted ? inputs.srcKey : modal.source
         })
         break
@@ -186,8 +186,8 @@ const PenManual = (() => {
         Number(inputs.length) < 1)
     )
       throw new Error('Enter a positive whole number for the source length.')
-    if (step === 'confirmation' && fields.confirmation !== 'CONFIRM')
-      throw new Error('Type CONFIRM to commit.')
+    if (step === 'confirmation' && fields.confirmation !== 'COMMIT')
+      throw new Error('Type COMMIT to publish.')
     if (
       (method === 'review' || method === 'commit') &&
       !modal.pasted &&
@@ -216,7 +216,7 @@ const PenManual = (() => {
     } else if (method === 'sign') {
       params = { request: inputs.request, password: fields.password }
     } else if (method === 'submitResponse') {
-      params = { response: inputs.response }
+      params = { requestId: modal.requestId, response: inputs.response }
     } else {
       params = {
         multisigKey: inputs.multisigKey,
@@ -239,6 +239,9 @@ const PenManual = (() => {
     return {
       output: result.output,
       details: result.details,
+      ...(method === 'review' && {
+        manualCommit: { ...modal, method: 'commit', step: sequence.length }
+      }),
       title: {
         request: 'Signing request',
         sign: 'Signature response',

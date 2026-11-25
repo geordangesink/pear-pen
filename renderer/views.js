@@ -153,7 +153,7 @@ const PenViews = (() => {
     return `<div class="empty-workspace">
       <div class="empty-mark">${icon('pencil-outline')}</div>
       <h1>No pens yet</h1>
-      <p>Add a multisig drive to start signing.</p>
+      <p>Create or join a private signing room.</p>
       <button class="primary" data-action="add">${icon('add')} Add your first pen</button>
     </div>`
   }
@@ -194,10 +194,10 @@ const PenViews = (() => {
       return `<button class="${creator ? 'secondary' : 'primary'}" data-action="review">${icon('reader-outline')} Review</button>
         ${creator ? `<button class="primary" data-action="commit">Commit ${icon('checkmark-done-outline')}</button>` : ''}`
     }
-    const signed = request.signatures.includes(state.profile.publicKey)
-    return `<button class="primary" data-action="${signed ? 'copy-response' : 'sign'}" data-request="${esc(request.id)}">
-        ${icon(signed ? 'copy-outline' : 'pencil-outline')}${signed ? 'Copy response' : 'Sign request'}
-      </button>`
+    if (request.signatures.includes(state.profile.publicKey))
+      return `<button class="secondary" data-action="copy-response" data-request="${esc(request.id)}">${icon('copy-outline')} Copy response</button>
+        <button class="primary" data-action="submit-peer-response">${icon('send-outline')} Submit peer’s response</button>`
+    return `<button class="primary" data-action="sign">${icon('pencil-outline')} Sign request</button>`
   }
 
   function detail(pen, state) {
@@ -209,7 +209,7 @@ const PenViews = (() => {
         ${avatar(pen)}
         <div class="heading-copy">
           <h1><button class="pen-title" data-action="pen-info" title="Pen details">${esc(pen.name)}</button></h1>
-          <p><button class="text-button" data-action="copy-drive" title="Copy full multisig drive key">${esc(short(pen.multisigKey))}</button> · ${pen.peers} peers connected</p>
+          <p><button class="text-button" data-action="copy-drive" title="Copy full multisig drive key">${esc(short(pen.multisigKey))}</button> · ${pen.privateRoom ? `${pen.peers} peers connected` : '<button class="text-button" data-action="setup-room">Set up private room</button>'}</p>
         </div>
         <button class="icon-button" data-action="pen-info" aria-label="Pen details" title="Pen details">${icon('information-circle-outline')}</button>
       </header>
@@ -249,6 +249,7 @@ const PenViews = (() => {
       <div class="event-copy">
         <div class="event-top"><span class="event-author"><strong>${esc(author)}</strong>${event.author ? `<span class="event-author-key" title="${esc(event.author)}">${esc(short(event.author))}</span>` : ''}</span><time title="${esc(date.toLocaleString())}">${esc(time)}</time></div>
         <p>${esc(event.text || event.type)}</p>
+        ${event.localOnly ? '<small class="event-relay">Earlier · only on this device</small>' : ''}
         ${event.srcKey ? `<div class="event-key key">${esc(event.srcKey)}</div>` : ''}
         ${event.sharedBy && event.sharedBy !== event.author ? `<small class="event-relay">Shared by ${esc(sharedBy)} · ${esc(short(event.sharedBy))}</small>` : ''}
         <div class="activity-actions">
@@ -321,13 +322,13 @@ const PenViews = (() => {
     )
   }
   const confirmationField = () =>
-    field('confirmation', 'Type COMMIT to confirm', 'COMMIT')
+    field('confirmation', 'Type COMMIT to publish', 'COMMIT')
 
   function penFacts(pen) {
     const quorum = knownQuorum(pen)
     return `<dl class="pen-facts">
       ${quorum > 0 ? `<div><dt>Quorum</dt><dd>${quorum}</dd></div>` : ''}
-      <div><dt>Connected peers</dt><dd>${pen.peers}</dd></div>
+      ${pen.privateRoom ? `<div><dt>Connected peers</dt><dd>${pen.peers}</dd></div>` : ''}
     </dl>${pen.quorumMismatch ? `<p class="field-note">Drive quorum is ${pen.quorum} (entered ${pen.configuredQuorum}).</p>` : ''}`
   }
 
@@ -343,8 +344,9 @@ const PenViews = (() => {
         title = modal.title
         body = `${modal.details ? requestDetails(modal.details) : ''}<button type="button" class="output-copy" data-copy-output aria-label="Copy result">${esc(modal.output)}</button>
           <p class="output-hint" role="status">${icon('copy-outline')} Click to copy. This stays here until you close it.</p>`
-        action =
-          '<button type="button" class="primary full" data-close>Close</button>'
+        action = modal.manualCommit
+          ? '<button type="button" class="secondary" data-close>Close</button><button type="button" class="primary" data-review-commit>Commit</button>'
+          : '<button type="button" class="primary full" data-close>Close</button>'
         break
       case 'key-export-options':
         title = 'Export private key'
@@ -369,22 +371,36 @@ const PenViews = (() => {
           '<button type="button" class="primary full" data-close>Done</button>'
         break
       case 'add':
-        title = 'Add a pen'
+        title = pen ? 'Set up private room' : 'Add a pen'
+        intro = pen
+          ? 'Create a room or join the one your signers use. Earlier activity stays on this device. The private room keeps its own history.'
+          : 'Create a private room with your multisig configuration, or join another signer’s room.'
+        body = `<div class="action-menu">
+          <button type="button" data-room-mode="create">${icon('add-circle-outline')}<span>Create room</span>${icon('chevron-forward')}</button>
+          <button type="button" data-room-mode="join">${icon('arrow-down-circle-outline')}<span>Join with invite</span>${icon('chevron-forward')}</button>
+        </div>`
+        action = ''
+        break
+      case 'join':
+        title = 'Join private room'
+        intro = 'Paste an invite from a signer who is online.'
         body =
-          '<div class="segmented creation-mode"><button type="button" class="active" data-add-mode="link">Link</button><button type="button" data-add-mode="config">Configuration</button></div>' +
-          field(
-            'multisigKey',
-            'Multisig drive key',
-            'Paste a multisig key or pear:// link',
-            { area: true, value: modal.link || '' }
-          ) +
+          field('invite', 'Room invite', 'pear-pen://invite/…', {
+            area: true
+          }) +
           field('name', 'Pen name (optional)', 'Defaults to the drive link', {
-            value: modal.name || '',
+            value: modal.name,
             required: false
           }) +
-          '<p class="field-note">You can sign or review an existing request without adding a configuration. To create a request, Pear Pen can use /pear.json at the root of the source drive or the configuration in Pen details.</p>' +
-          `<button type="button" class="text-button" data-help>${icon('help-circle-outline')} Find your multisig key</button>`
-        action = '<button type="submit" class="primary">Add pen</button>'
+          (state.profile.encrypted ? signingCredentials(state.profile) : '')
+        action =
+          '<button type="button" class="secondary" data-room-mode="choose">Back</button><button type="submit" class="primary">Join room</button>'
+        break
+      case 'room-invite':
+        title = 'Invite a signer'
+        intro = `Keep Pear Pen online until they join. This 10-minute invite expires at ${new Date(modal.expiresAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.`
+        body = `<button type="button" class="output-copy" data-copy-invite aria-label="Copy room invite">${esc(modal.invite)}</button>
+          <p class="output-hint" role="status">${icon('copy-outline')} Click to copy</p>`
         break
       case 'manual':
         title = pen.name
@@ -446,7 +462,9 @@ const PenViews = (() => {
         break
       case 'remove':
         title = 'Remove pen from this device?'
-        intro = `${pen.name}. You can add it again with its multisig link.`
+        intro = pen.privateRoom
+          ? `${pen.name}. You’ll need an invite from another member to rejoin this room.`
+          : pen.name
         action =
           '<button type="button" class="secondary" data-cancel-remove>Cancel</button><button type="submit" class="danger">Remove</button>'
         break
@@ -458,16 +476,26 @@ const PenViews = (() => {
           <button type="button" class="output-copy" data-copy-drive aria-label="Copy multisig link">pear://${esc(pen.multisigKey)}</button>
           <p class="output-hint">Click to copy</p>
           <div data-pen-facts>${penFacts(pen)}</div>
-          <p class="field-note">Read from the source automatically, or import its pear.json.</p>
           <div class="pen-detail-actions">
+            ${pen.privateRoom ? '<button type="button" class="primary full" data-room-invite>Invite a signer</button>' : '<button type="button" class="primary full" data-room-mode="choose">Set up private room</button>'}
             <button type="button" class="secondary full" data-edit-config>Configuration ${icon('chevron-forward')}</button>
             <button class="danger full" type="button" data-remove>Remove pen from this device</button>
           </div>`
         break
       case 'configuration':
-        title = modal.creating ? 'Add a pen' : 'Configuration'
-        body = `${modal.creating ? '<div class="segmented creation-mode"><button type="button" data-add-mode="link">Link</button><button type="button" class="active" data-add-mode="config">Configuration</button></div>' : ''}${PenConfiguration.render(modal)}`
-        action = `<button type="button" class="secondary" ${modal.creating ? 'data-add-mode="link"' : 'data-pen-info'}>${icon('chevron-back')} Back</button><button type="submit" class="primary">${modal.preview && !modal.preview.changed ? (modal.creating ? 'Add pen' : 'Save configuration') : 'Preview configuration'}</button>`
+        title = modal.creating ? 'Create private room' : 'Configuration'
+        intro = modal.creating
+          ? 'Invitees receive this configuration after they prove they are one of its signers.'
+          : ''
+        body = PenConfiguration.render(modal)
+        if (
+          modal.creating &&
+          modal.preview &&
+          !modal.preview.changed &&
+          state.profile.encrypted
+        )
+          body += `<div data-room-credentials>${signingCredentials(state.profile)}</div>`
+        action = `<button type="button" class="secondary" ${modal.creating ? 'data-room-mode="choose"' : 'data-pen-info'}>${icon('chevron-back')} Back</button><button type="submit" class="primary">${modal.preview && !modal.preview.changed ? (modal.creating ? 'Create room' : 'Save configuration') : 'Preview configuration'}</button>`
         break
     }
     return `<div class="modal-backdrop">

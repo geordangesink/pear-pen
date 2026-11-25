@@ -110,7 +110,9 @@ function openModal(value) {
   }
   modal = value
   const focus = {
-    add: '[name="multisigKey"]',
+    add: '[data-room-mode]',
+    join: '[name=invite]',
+    'room-invite': '[data-copy-invite]',
     manual: '[data-pen-info]',
     'manual-action': manualFocus
   }
@@ -139,11 +141,16 @@ async function copy(value, hint = false) {
   else toast('Copied to clipboard')
 }
 
-async function output(value, title = 'Ready to share.', details) {
+async function output(
+  value,
+  title = 'Ready to share.',
+  { details, manualCommit } = {}
+) {
   const next = {
     type: 'output',
     title,
     ...(details && { details }),
+    ...(manualCommit && { manualCommit }),
     output: typeof value === 'string' ? value : JSON.stringify(value, null, 2)
   }
   await call('dialog.save', { dialog: next })
@@ -183,7 +190,7 @@ async function submit(form, operation) {
       modal.method === 'request' &&
       'length' in fields)
   if (button)
-    button.innerHTML = `<span class="spinner" aria-hidden="true"></span>${connecting ? 'Connecting and loading source…' : 'Working…'}`
+    button.innerHTML = `<span class="spinner" aria-hidden="true"></span>${connecting ? 'Connecting and loading source…' : modal?.type === 'join' ? 'Connecting to inviter…' : 'Working…'}`
   form.setAttribute('aria-busy', 'true')
   form.querySelector('.form-error').textContent = ''
   try {
@@ -277,6 +284,8 @@ app.addEventListener('click', async (event) => {
       return
     }
     switch (action) {
+      case 'setup-room':
+        return openModal({ type: 'add', penId: pen.id, creating: true })
       case 'copy-drive':
         return await copy(pen.multisigKey)
       case 'copy-source':
@@ -289,6 +298,8 @@ app.addEventListener('click', async (event) => {
           { penId: pen.id, requestId: button.dataset.request },
           'Signature response'
         )
+      case 'submit-peer-response':
+        return startManual('submitResponse', pen.id)
       case 'review':
         toast('Preparing the release for review…')
         return await showResult(
@@ -339,9 +350,15 @@ app.addEventListener('click', async (event) => {
 })
 
 modalRoot.addEventListener('input', (event) => {
-  if (modal?.type !== 'configuration' || busy) return
+  if (
+    modal?.type !== 'configuration' ||
+    busy ||
+    ['password', 'username', 'configName'].includes(event.target.name)
+  )
+    return
   PenConfiguration.capture(modal, event.target.form)
   modal.preview = null
+  modalRoot.querySelector('[data-room-credentials]')?.remove()
   modalRoot.querySelector('[data-config-preview]')?.remove()
   modalRoot.querySelector('button[type=submit]').textContent =
     'Preview configuration'
@@ -353,28 +370,50 @@ modalRoot.addEventListener('click', async (event) => {
   const data = button.dataset
   const penId = modal.penId
   try {
-    if ('addMode' in data) {
+    if ('roomMode' in data) {
+      const pen = state.pens.find((item) => item.id === penId)
       if (modal.type === 'configuration')
         PenConfiguration.capture(modal, button.form)
-      else {
-        modal.name = button.form.elements.name.value
-        modal.link = button.form.elements.multisigKey.value
-      }
-      openModal({
-        type: data.addMode === 'config' ? 'configuration' : 'add',
+      const name =
+        button.form.elements.name?.value ??
+        modal.name ??
+        (pen && pen.name !== `pear://${pen.multisigKey}` ? pen.name : '')
+      const next = {
+        penId,
+        name,
         creating: true,
-        name: modal.name,
-        link: modal.link,
-        configMode: 'fields',
-        config:
-          modal.config ||
-          JSON.stringify(
-            { multisig: { namespace: '', quorum: 1, publicKeys: [''] } },
-            null,
-            2
-          )
+        multisigKey: pen?.multisigKey
+      }
+      if (data.roomMode === 'create') {
+        await submit(button.form, async () => {
+          const config = penId
+            ? (await call('pen.configuration', { penId })).config
+            : JSON.stringify(
+                { multisig: { namespace: '', quorum: 1, publicKeys: [''] } },
+                null,
+                2
+              )
+          openModal({
+            ...next,
+            type: 'configuration',
+            config,
+            configMode: 'fields'
+          })
+        })
+      } else
+        openModal({ ...next, type: data.roomMode === 'join' ? 'join' : 'add' })
+    } else if ('roomInvite' in data) {
+      await submit(button.form, async () => {
+        const { invite, expiresAt } = await call('pen.invite', { penId })
+        openModal({ type: 'room-invite', penId, invite, expiresAt })
       })
+    } else if ('copyInvite' in data) {
+      if (Date.now() >= modal.expiresAt)
+        throw new Error('Invite expired. Create a new one in Pen details.')
+      await copy(modal.invite, true)
     } else if ('close' in data) await closeModal()
+    else if ('reviewCommit' in data)
+      openModal({ ...modal.manualCommit, reviewOutput: modal })
     else if ('copyOutput' in data) {
       event.preventDefault()
       await copy(modal.output, true)
@@ -468,9 +507,13 @@ modalRoot.addEventListener('click', async (event) => {
     } else if ('help' in data) await api.openHelp(data.help || undefined)
     else if ('manual' in data) startManual(data.manual, penId)
     else if ('manualBack' in data || 'pastedRequest' in data) {
+      if (modal.reviewOutput) return openModal(modal.reviewOutput)
       PenManual.capture(modal, Object.fromEntries(new FormData(button.form)))
       if ('pastedRequest' in data) modal.pasted = !modal.pasted
-      else if (modal.step === 0) return openModal({ type: 'manual', penId })
+      else if (modal.step === 0)
+        return state.settings.mode === 'manual'
+          ? openModal({ type: 'manual', penId })
+          : await closeModal()
       else modal.step--
       drawModal(manualFocus)
     } else if ('penInfo' in data) openModal({ type: 'pen-info', penId })
@@ -514,14 +557,22 @@ modalRoot.addEventListener('submit', (event) => {
         ) {
           modal.config = preview.config
           modal.preview = preview
-          drawModal('[data-copy-config-key]')
+          drawModal(
+            modal.creating && state.profile.encrypted && !preview.changed
+              ? '[name=password]'
+              : '[data-copy-config-key]'
+          )
         }
       } else {
-        state = await call(descriptor.creating ? 'pen.add' : 'pen.configure', {
-          ...(descriptor.penId && { penId: descriptor.penId }),
-          name: descriptor.name,
-          config: descriptor.config
-        })
+        state = await call(
+          descriptor.creating ? 'pen.create' : 'pen.configure',
+          {
+            ...(descriptor.penId && { penId: descriptor.penId }),
+            name: descriptor.name,
+            config: descriptor.config,
+            ...(descriptor.creating && { password: fields.password })
+          }
+        )
         selectedId = descriptor.preview.multisigKey
         if (descriptor.creating) {
           await closeModal()
@@ -531,7 +582,7 @@ modalRoot.addEventListener('submit', (event) => {
           render()
           openModal({ type: 'pen-info', penId: descriptor.penId })
         }
-        toast(descriptor.creating ? 'Pen added' : 'Configuration saved')
+        toast(descriptor.creating ? 'Room created' : 'Configuration saved')
       }
       return
     }
@@ -541,14 +592,26 @@ modalRoot.addEventListener('submit', (event) => {
     }
     if (descriptor.type === 'manual-action') {
       const result = await PenManual.submit(modal, fields, call)
-      if (result) await output(result.output, result.title, result.details)
+      if (result) await output(result.output, result.title, result)
       else drawModal(manualFocus)
       return
     }
-    if (descriptor.type === 'add') {
-      const existing = new Set(state.pens.map((pen) => pen.id))
-      state = await call('pen.add', params)
-      selectedId = state.pens.find((pen) => !existing.has(pen.id))?.id || null
+    if (descriptor.type === 'join') {
+      const existing = new Set(
+        state.pens.filter((pen) => pen.privateRoom).map((pen) => pen.id)
+      )
+      state = await call('pen.join', {
+        penId: descriptor.penId,
+        name: fields.name.trim(),
+        invite: fields.invite.trim(),
+        password: fields.password
+      })
+      selectedId =
+        descriptor.penId ||
+        state.pens.find((pen) => pen.privateRoom && !existing.has(pen.id))
+          ?.id ||
+        selectedId
+      toast('Room joined')
     } else {
       const methods = {
         request: 'request.create',
@@ -565,7 +628,7 @@ modalRoot.addEventListener('submit', (event) => {
     }
     await closeModal()
     render()
-    if (descriptor.type === 'add')
+    if (descriptor.type === 'join')
       app.querySelector('.pen-row.selected')?.focus()
   })
 })

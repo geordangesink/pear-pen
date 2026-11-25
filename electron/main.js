@@ -12,8 +12,7 @@ const {
 const fs = require('fs/promises')
 const path = require('path')
 const { randomUUID } = require('crypto')
-const PearRuntime = require('pear-runtime')
-const FramedStream = require('framed-stream')
+const PearPenCore = require('pear-pen-core')
 const { command, flag } = require('paparam')
 const pkg = require('../package.json')
 
@@ -75,15 +74,15 @@ function startWorker() {
       : !!process.windowsStore
   const updates =
     app.isPackaged && supported && cli.flags.updates !== false && !!pkg.upgrade
-  worker = PearRuntime.run(path.join(__dirname, '../workers/main.js'), [
-    String(updates),
-    pkg.version,
-    pkg.upgrade || '',
-    pkg.productName + extension,
-    app.getPath('userData'),
-    target
-  ])
-  pipe = new FramedStream(worker)
+  pipe = new PearPenCore({
+    updates,
+    version: pkg.version,
+    upgrade: pkg.upgrade,
+    name: pkg.productName + extension,
+    dir: app.getPath('userData'),
+    app: target
+  })
+  worker = pipe.worker
   pipe.on('data', (data) => {
     let message
     try {
