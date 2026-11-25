@@ -1,7 +1,7 @@
 {
   "multisig": {
-    "namespace": "pear-pen-desktop/desktop",
-    "publicKeys": ["sh9st5zthf9boqe6xjpk95nz86job9u4innexezi5qmduaz51ihy"],
-    "quorum": 1
+    "namespace": "pearpen/desktop",
+    "publicKeys": ["p813tbta5oaf83fddrxdru4tyc19r1mxir1wdeqqj65ew6oucr4o", "xhqs5zzche71siyefqkg838q1zuroe1ar7pyqwhk9if6trdrpqhy"],
+    "quorum": 2
   }
 }

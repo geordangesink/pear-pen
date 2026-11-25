@@ -7,7 +7,7 @@
   "private": true,
   "type": "commonjs",
   "main": "electron/main.js",
-  "upgrade": "pear://hzy48wazh7yndmzj85q5pcd3emjpjnbwuhuq6o7kzm6ejnf3eoso",
+  "upgrade": "pear://5153d3gh8kw14tu67rh7gh3s14r3q4ynpu3nrb9ure8tkug8qe6y",
   "scripts": {
     "start": "electron-forge start -- --no-updates",
     "package": "electron-forge package",
@@ -49,13 +49,6 @@
     "hypercore-signing-request": {
       "hypercore": "^11.40.3",
       "hyperdrive": "^13.3.4"
-    }
-  },
-  "grocer": {
-    "upgrades": {
-      "production": "pear://kerdqeiyou17u8whw9457ym583dj6c4woe4r6pmerrij655uhu8y",
-      "dev": "pear://hzy48wazh7yndmzj85q5pcd3emjpjnbwuhuq6o7kzm6ejnf3eoso",
-      "provision": "pear://cdtew53x9u1u58hs4epzbregp98dskwe48xynczn4sd7y48s514y"
     }
   }
 }
