@@ -1,8 +1,18 @@
 const fs = require('fs')
+const os = require('os')
 const path = require('path')
-const { execFileSync } = require('child_process')
+const { execFileSync, spawnSync } = require('child_process')
 const { parse } = require('pear-link')
 const pkg = require('./package.json')
+
+function appIcon() {
+  const classic = 'build/icon'
+  if (process.platform !== 'darwin' || parseInt(os.release(), 10) < 25)
+    return classic
+  const { stdout } = spawnSync('xcodebuild', ['-version'], { encoding: 'utf8' })
+  const version = stdout?.match(/^Xcode (\d+)/)?.[1]
+  return Number(version) >= 26 ? [classic, 'build/PearPen.icon'] : classic
+}
 
 function prepareDmg() {
   for (const name of ['macos-alias', 'fs-xattr']) {
@@ -44,7 +54,7 @@ module.exports = {
     executableName: 'PearPen',
     appBundleId: 'com.pears.pearpen',
     appCategoryType: 'public.app-category.developer-tools',
-    icon: 'build/icon',
+    icon: appIcon(),
     asar: false,
     derefSymlinks: true,
     ignore: [
