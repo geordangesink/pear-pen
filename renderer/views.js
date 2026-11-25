@@ -16,6 +16,8 @@ const PenViews = (() => {
   const initial = (name) => (name || 'P').trim().slice(0, 1).toUpperCase()
   const activeRequest = (pen) =>
     pen?.request?.status === 'open' ? pen.request : null
+  const versionLabel = (request) =>
+    request?.packageVersion ? `Version ${request.packageVersion}` : ''
   const knownQuorum = (pen) =>
     pen.signers?.length ? activeRequest(pen)?.quorum || pen.quorum : 0
   const avatar = (pen) =>
@@ -162,6 +164,9 @@ const PenViews = (() => {
   }
 
   function requestCard(request, quorum, reached) {
+    const title = request
+      ? versionLabel(request) || 'Source drive'
+      : 'No open request'
     let description = ''
     if (request)
       description = reached
@@ -169,7 +174,7 @@ const PenViews = (() => {
         : 'Waiting for signatures.'
     return `<section class="request-card">
       <div class="request-top">
-        <div><div class="eyebrow">CURRENT REQUEST</div><h3>${request ? 'Source drive' : 'No open request'}</h3>${description ? `<p>${description}</p>` : ''}</div>
+        <div><div class="eyebrow">CURRENT REQUEST</div><h3>${esc(title)}</h3>${description ? `<p>${description}</p>` : ''}</div>
         ${
           quorum > 0
             ? `<div class="quorum">
@@ -261,7 +266,11 @@ const PenViews = (() => {
           ${event.response && event.request && event.author ? `<button class="text-button activity-copy" data-action="activity-verify" data-event="${esc(event.id)}">${icon('checkmark-circle-outline')} Verify</button>` : ''}
         </div>
       </div>
-    </article>`
+    </article>${
+      event.type === 'commit'
+        ? `<p class="release-divider">${event.packageVersion ? `Released ${esc(event.packageVersion)}` : 'Release committed'}</p>`
+        : ''
+    }`
   }
 
   function setting(name, label, values, selected) {
@@ -299,6 +308,9 @@ const PenViews = (() => {
 
   function requestDetails(snapshot) {
     const entries = [
+      ...(snapshot.packageVersion
+        ? [['Version', snapshot.packageVersion]]
+        : []),
       ['Destination key', snapshot.key],
       ['Fork', snapshot.fork],
       ['Metadata length', snapshot.length],
@@ -407,8 +419,10 @@ const PenViews = (() => {
         body = `<button type="button" class="output-copy" data-copy-invite aria-label="Copy room invite">${esc(modal.invite)}</button>
           <p class="output-hint" role="status">${icon('copy-outline')} Click to copy</p>`
         break
-      case 'manual':
+      case 'manual': {
         title = pen.name
+        const version = versionLabel(activeRequest(pen))
+        if (version) intro = `Current request · ${version}`
         body = `<div class="action-menu">
           <button type="button" data-pen-info>${icon('information-circle-outline')}<span>Pen details</span>${icon('chevron-forward')}</button>
           ${Object.entries({
@@ -427,6 +441,7 @@ const PenViews = (() => {
         action =
           '<button type="button" class="secondary full" data-close>Cancel</button>'
         break
+      }
       case 'manual-action': {
         const page = PenManual.render(modal, state.profile, {
           field,
