@@ -1,8 +1,11 @@
 const { contextBridge, ipcRenderer } = require('electron')
 
 contextBridge.exposeInMainWorld('pen', {
+  isMac: process.platform === 'darwin',
   request: (method, params = {}) =>
     ipcRenderer.invoke('pen:request', method, params),
+  showPasswords: (x, y) => ipcRenderer.invoke('pen:showPasswords', x, y),
+  savePassword: (password) => ipcRenderer.invoke('pen:savePassword', password),
   copy: (value) => ipcRenderer.invoke('pen:copy', value),
   importFile: (kind) => ipcRenderer.invoke('pen:importFile', kind),
   chooseImage: () => ipcRenderer.invoke('pen:chooseImage'),

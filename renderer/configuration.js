@@ -23,6 +23,19 @@ const PenConfiguration = (() => {
     return `<label class="field"><span class="field-label">${esc(label)}</span><input class="input" name="${name}" type="${type}" value="${esc(value)}" autocomplete="off" spellcheck="false" ${type === 'number' ? 'min="1" step="1"' : ''} /></label>`
   }
 
+  function namePlaceholder(modal) {
+    const key = modal.preview?.multisigKey || modal.multisigKey
+    if (modal.preview?.suggestedName) return modal.preview.suggestedName
+    if (modal.config) {
+      try {
+        const namespace = read(modal.config).multisig?.namespace
+        if (typeof namespace === 'string' && namespace.trim())
+          return namespace.trim()
+      } catch {}
+    }
+    return key ? `pear://${key}` : 'From room configuration'
+  }
+
   function fields(config) {
     const recipe = config.multisig
     const manifest = config.manifest
@@ -53,7 +66,6 @@ const PenConfiguration = (() => {
     const json = modal.configMode === 'json' || !config
     return `<div class="config-toolbar"><button type="button" class="secondary" data-import-config>Import JSON</button>
       <div class="segmented" aria-label="Configuration view"><button type="button" class="${!json ? 'active' : ''}" data-config-mode="fields">Fields</button><button type="button" class="${json ? 'active' : ''}" data-config-mode="json">JSON</button></div></div>
-      ${field('configName', 'Pen name (optional)', modal.name)}
       ${json ? `<label class="field"><span class="field-label">Configuration JSON</span><textarea class="config-json" name="configJson" spellcheck="false" aria-label="Configuration JSON">${esc(modal.config)}</textarea></label>` : fields(config)}
       ${modal.preview ? `<div class="config-preview" data-config-preview>${modal.preview.changed ? `<p class="form-error" role="alert">This configuration does not match this pen. Edit it or import another JSON file.</p><span class="field-label">Expected pen link</span><div class="review-output key">pear://${esc(modal.multisigKey)}</div><br />` : ''}<span class="field-label">${modal.preview.changed ? 'Configuration produces' : 'Multisig link'}</span><button type="button" class="output-copy" data-copy-config-key>pear://${esc(modal.preview.multisigKey)}</button></div>` : ''}`
   }
@@ -120,5 +132,5 @@ const PenConfiguration = (() => {
     return policy[key].length
   }
 
-  return { read, render, capture, signer }
+  return { read, render, capture, signer, namePlaceholder }
 })()

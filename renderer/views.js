@@ -27,24 +27,26 @@ const PenViews = (() => {
       required = true,
       type = 'text',
       autocomplete = 'off',
-      readOnly = false,
+      passwords = autocomplete === 'current-password' ||
+        autocomplete === 'new-password',
       value = '',
       note = '',
       file = false
     } = options
-    const attributes = `name="${name}" placeholder="${esc(placeholder)}" autocomplete="${autocomplete}" ${required ? 'required' : ''} ${readOnly ? 'readonly' : ''}`
+    const attributes = `id="field-${name}" name="${name}" placeholder="${esc(placeholder)}" autocomplete="${autocomplete}" ${required ? 'required' : ''}`
     const input = area
       ? `<textarea ${attributes} spellcheck="false">${esc(value)}</textarea>`
       : `<input class="input" ${attributes} type="${type}" value="${esc(value)}"
           ${autocomplete === 'username' ? 'maxlength="120" spellcheck="false" autocapitalize="none"' : ''}
           ${type === 'number' ? 'min="1" step="1" inputmode="numeric"' : ''} />`
-    return `<label class="field">
-      <span class="field-label">${esc(label)}
+    return `<div class="field">
+      <span class="field-label"><label for="field-${name}">${esc(label)}</label>
         ${file ? `<button type="button" class="text-button" data-import="${name}">Choose file</button>` : ''}
+        ${passwords ? '<button type="button" class="text-button" data-passwords aria-haspopup="menu">Passwords…</button>' : ''}
       </span>
       ${input}
       ${note ? `<small class="field-note">${esc(note)}</small>` : ''}
-    </label>`
+    </div>`
   }
 
   function onboarding(suggestedName) {
@@ -74,6 +76,7 @@ const PenViews = (() => {
       {
         type: 'password',
         autocomplete: importing ? 'current-password' : 'new-password',
+        passwords: !!window.pen.isMac,
         required: !importing
       }
     )
@@ -230,11 +233,11 @@ const PenViews = (() => {
   function activityEvent(event, profile) {
     const author =
       event.author === profile.publicKey
-        ? profile.name || event.authorName || 'You'
+        ? profile.name || 'You'
         : event.authorName || (event.author ? 'Signer' : 'Pear Pen')
     const sharedBy =
       event.sharedBy === profile.publicKey
-        ? profile.name || event.sharedByName || 'You'
+        ? profile.name || 'You'
         : event.sharedByName || 'Signer'
     const date = new Date(event.at)
     const time = Number.isNaN(date.getTime())
@@ -310,17 +313,22 @@ const PenViews = (() => {
 
   function signingCredentials(profile) {
     return (
-      field('username', 'Username', '', {
-        autocomplete: 'username',
-        value: profile.username || profile.name || profile.publicKey,
-        readOnly: true
-      }) +
+      `<input type="hidden" name="username" autocomplete="username" value="${esc(profile.name)}" />` +
       field('password', 'Key password', 'Enter your password', {
         type: 'password',
         autocomplete: 'current-password'
       })
     )
   }
+  function roomDetails(modal) {
+    const input = modal.type === 'join' ? 'name' : 'configName'
+    return `<section class="room-details"><h3>Room details <small>Optional</small></h3>
+      ${field(input, 'Pen name', PenConfiguration.namePlaceholder(modal), {
+        value: modal.name,
+        required: false
+      })}</section>`
+  }
+
   const confirmationField = () =>
     field('confirmation', 'Type COMMIT to publish', 'COMMIT')
 
@@ -388,11 +396,8 @@ const PenViews = (() => {
           field('invite', 'Room invite', 'pear-pen://invite/…', {
             area: true
           }) +
-          field('name', 'Pen name (optional)', 'Defaults to the drive link', {
-            value: modal.name,
-            required: false
-          }) +
-          (state.profile.encrypted ? signingCredentials(state.profile) : '')
+          (state.profile.encrypted ? signingCredentials(state.profile) : '') +
+          roomDetails(modal)
         action =
           '<button type="button" class="secondary" data-room-mode="choose">Back</button><button type="submit" class="primary">Join room</button>'
         break
@@ -495,6 +500,7 @@ const PenViews = (() => {
           state.profile.encrypted
         )
           body += `<div data-room-credentials>${signingCredentials(state.profile)}</div>`
+        body += roomDetails(modal)
         action = `<button type="button" class="secondary" ${modal.creating ? 'data-room-mode="choose"' : 'data-pen-info'}>${icon('chevron-back')} Back</button><button type="submit" class="primary">${modal.preview && !modal.preview.changed ? (modal.creating ? 'Create room' : 'Save configuration') : 'Preview configuration'}</button>`
         break
     }

@@ -18,15 +18,16 @@
     "make:linux:appimage": "electron-forge make --platform=linux --targets=pear-electron-forge-maker-appimage",
     "lint": "prettier --check .",
     "format": "prettier --write .",
-    "test": "npm --prefix node_modules/pear-pen-core test",
+    "test": "node --test test/*.test.js && npm --prefix node_modules/pear-pen-core test",
     "check:upgrade": "node scripts/check-upgrade.js"
   },
   "dependencies": {
+    "@napi-rs/keyring": "2.1.2",
     "hyper-multisig": "2.5.0",
     "hypercore-sign-v4": "npm:hypercore-sign@4.1.1",
     "hypercore-signing-request": "5.2.0",
     "paparam": "^1.10.0",
-    "pear-pen-core": "file:vendor/pear-pen-core-1.0.0-9724c07b7939.tgz",
+    "pear-pen-core": "file:vendor/pear-pen-core-1.0.0-5aaf1f463df6.tgz",
     "pear-runtime": "^1.3.1"
   },
   "devDependencies": {

@@ -12,7 +12,13 @@ const {
 const fs = require('fs/promises')
 const path = require('path')
 const { randomUUID } = require('crypto')
+const { pathToFileURL } = require('url')
 const PearPenCore = require('pear-pen-core')
+const {
+  passwordMenu,
+  offerPasswordSave,
+  savePassword
+} = require('./saved-password')
 const { command, flag } = require('paparam')
 const pkg = require('../package.json')
 
@@ -41,6 +47,7 @@ let shutdownWorker
 let shutdownTimer
 const pending = new Map()
 const shutdownMessage = 'Pear Pen is shutting down.'
+const rendererFile = path.join(__dirname, '../renderer/index.html')
 
 function publish(message) {
   if (message.type === 'state') setTheme(message.state?.settings?.theme)
@@ -153,10 +160,84 @@ function request(method, params) {
   })
 }
 
-ipcMain.handle('pen:request', async (_, method, params) => {
+function isPasswordFrame({ sender, senderFrame }) {
+  return (
+    !quitting &&
+    window &&
+    !window.isDestroyed() &&
+    sender === window.webContents &&
+    senderFrame === sender.mainFrame &&
+    senderFrame?.url === pathToFileURL(rendererFile).href
+  )
+}
+
+async function openSystemPasswords() {
+  for (const target of [
+    '/System/Applications/Passwords.app',
+    '/System/Library/PreferencePanes/Passwords.prefPane'
+  ]) {
+    if (!(await fs.stat(target).catch(() => null))?.isDirectory()) continue
+    if (!(await shell.openPath(target))) return
+  }
+  dialog.showMessageBox(window, {
+    type: 'warning',
+    message: 'Could not open Passwords on this Mac.'
+  })
+}
+
+ipcMain.handle('pen:showPasswords', async (event, x, y) => {
+  if (
+    !isPasswordFrame(event) ||
+    !Number.isSafeInteger(x) ||
+    !Number.isSafeInteger(y)
+  )
+    return null
+  const frame = event.senderFrame
+  const valid = await frame.executeJavaScript(
+    `document.activeElement?.matches('input[name=password][type=password]:is([autocomplete=new-password],[autocomplete=current-password]):enabled:not([readonly])')`
+  )
+  if (!valid || !isPasswordFrame(event)) return null
+  const template =
+    process.platform === 'darwin'
+      ? [
+          { label: 'Open Passwords…', click: openSystemPasswords },
+          { type: 'separator' },
+          { role: 'paste' }
+        ]
+      : []
+  const scale = event.sender.getZoomFactor()
+  const [width, height] = window.getContentSize()
+  return passwordMenu({
+    window,
+    frame,
+    request,
+    template,
+    x: Math.max(0, Math.min(width - 1, Math.round(x * scale))),
+    y: Math.max(0, Math.min(height - 1, Math.round(y * scale)))
+  })
+})
+ipcMain.handle('pen:savePassword', (event, password) => {
+  if (!isPasswordFrame(event))
+    throw new Error('Open the password field in Pear Pen.')
+  return savePassword(request, password)
+})
+ipcMain.handle('pen:request', async (event, method, params) => {
   if (typeof method !== 'string' || method.length > 64)
     throw new Error('Invalid operation')
   const result = await request(method, params)
+  if (
+    method === 'profile.import' &&
+    result.profile?.encrypted &&
+    params.password &&
+    isPasswordFrame(event)
+  ) {
+    offerPasswordSave(window, result.profile, params.password).catch(() =>
+      publish({
+        type: 'warning',
+        message: 'Your signing key is ready. The password could not be saved.'
+      })
+    )
+  }
   if (method !== 'profile.export') return result
   const exportId = ++exportSequence
   keyExport = { ...result, exportId, kind: params.kind }
@@ -340,7 +421,7 @@ async function createWindow() {
   window.once('closed', () => {
     keyExport = null
   })
-  await window.loadFile(path.join(__dirname, '../renderer/index.html'))
+  await window.loadFile(rendererFile)
 }
 
 function forceQuit() {

@@ -52,6 +52,7 @@ module.exports = {
       /^\/dist($|\/)/,
       /^\/\.github($|\/)/,
       /^\/vendor($|\/)/,
+      /^\/test($|\/)/,
       /^\/node_modules\/pear-pen-core\/test($|\/)/
     ]
   },

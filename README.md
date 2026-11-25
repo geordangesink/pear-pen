@@ -9,9 +9,11 @@ npm test
 npm run lint
 ```
 
-To generate a signing pair, keep the suggested username or enter your own, then create a password. The username identifies the saved password even if you edit your display name later. To import a key, paste or choose its file. A private key alone is enough. Encrypted imports use their existing password. Settings can copy or export either key.
+To generate a signing pair, keep the suggested username or enter your own, then create a password. You can change your name in Settings. Password prompts use your current name for autofill. To import a key, paste or choose its file. A private key alone is enough. Encrypted imports use their existing password. Settings can copy or export either key.
 
-Choose **Add pen → Create** and paste or import the multisig configuration. Pear Pen checks that your signing key belongs to its signer list and derives the drive link. To invite another signer, open **Pen details → Invite a signer** and keep Pear Pen online. The recipient chooses **Add pen → Join** and pastes the invite. It expires after ten minutes. Joining requires proof from a signing key listed in the configuration. Unlock an encrypted key with its password on your own device.
+After encrypted setup, Pear Pen offers to save your key password in your device’s credential store. Use **Passwords…** beside a key password field to fill, save or forget it. Filling the field still leaves signing up to you. On macOS, this menu also offers system AutoFill when available and **Open Passwords…** to manage entries in Apple Passwords.
+
+Choose **Add pen → Create** and paste or import the multisig configuration. Leave the pen name blank to use the configuration’s `multisig.namespace`. A raw manifest without a namespace uses the drive link. Pear Pen checks that your signing key belongs to its signer list and derives the drive link. To invite another signer, open **Pen details → Invite a signer** and keep Pear Pen online. The recipient chooses **Add pen → Join** and pastes the invite. It expires after ten minutes. Joining requires proof from a signing key listed in the configuration. Unlock an encrypted key with its password on your own device.
 
 Earlier link-only pens retain their local signing history. Create or join a private room for that drive to resume sharing activity. The new room has its own history. Create requests using a **provisioned source Hyperdrive key**.
 

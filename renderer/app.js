@@ -79,6 +79,10 @@ function render() {
   if (nextHistory && history !== nextHistory)
     nextHistory.scrollTop =
       previousId === pen?.id && !atBottom ? top : nextHistory.scrollHeight
+  const username = modalRoot.querySelector(
+    'input[type="hidden"][name=username]'
+  )
+  if (username) username.value = state.profile.name || ''
   if (modal?.type === 'pen-info') {
     const inspected = state.pens.find((item) => item.id === modal.penId)
     if (inspected)
@@ -93,7 +97,8 @@ function drawModal(focus = 'input,textarea,button') {
     requestAnimationFrame(() => modalRoot.querySelector(focus)?.focus())
 }
 
-const manualFocus = 'textarea, input:not([readonly]), button[type="submit"]'
+const manualFocus =
+  'textarea, input:not([type="hidden"]), button[type="submit"]'
 
 function startManual(method, penId) {
   const pen = state.pens.find((item) => item.id === penId)
@@ -216,6 +221,37 @@ function updateImportFields(form) {
   form.querySelector('[data-key-password]').innerHTML =
     PenViews.onboardingPassword(importing)
 }
+
+document.addEventListener('click', async (event) => {
+  const button = event.target.closest('[data-passwords]')
+  if (!button || busy) return
+  const input = button.form.elements.password
+  button.form.querySelector('.form-error').textContent = ''
+  input.focus()
+  const { left, bottom } = input.getBoundingClientRect()
+  try {
+    const result = await api.showPasswords(Math.round(left), Math.round(bottom))
+    if (
+      !result ||
+      !input.isConnected ||
+      input !== document.activeElement ||
+      input.disabled ||
+      input.readOnly ||
+      busy
+    )
+      return
+    if (result.action === 'fill') {
+      input.value = result.password
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    } else if (result.action === 'save') {
+      if (!input.value) throw new Error('Enter your key password first.')
+      await api.savePassword(input.value)
+      toast('Password saved on this device')
+    }
+  } catch (error) {
+    showError(error)
+  }
+})
 
 app.addEventListener('input', ({ target }) => {
   if (target.name === 'publicKey' || target.name === 'secretKey')
@@ -358,6 +394,8 @@ modalRoot.addEventListener('input', (event) => {
     return
   PenConfiguration.capture(modal, event.target.form)
   modal.preview = null
+  event.target.form.elements.configName.placeholder =
+    PenConfiguration.namePlaceholder(modal)
   modalRoot.querySelector('[data-room-credentials]')?.remove()
   modalRoot.querySelector('[data-config-preview]')?.remove()
   modalRoot.querySelector('button[type=submit]').textContent =
@@ -375,9 +413,7 @@ modalRoot.addEventListener('click', async (event) => {
       if (modal.type === 'configuration')
         PenConfiguration.capture(modal, button.form)
       const name =
-        button.form.elements.name?.value ??
-        modal.name ??
-        (pen && pen.name !== `pear://${pen.multisigKey}` ? pen.name : '')
+        button.form.elements.name?.value ?? modal.name ?? pen?.customName ?? ''
       const next = {
         penId,
         name,
@@ -446,7 +482,7 @@ modalRoot.addEventListener('click', async (event) => {
           multisigKey: pen.multisigKey,
           config,
           configMode: 'fields',
-          name: pen.name === `pear://${pen.multisigKey}` ? '' : pen.name
+          name: pen.customName
         })
       } finally {
         button.disabled = false
