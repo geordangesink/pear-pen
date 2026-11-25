@@ -9,6 +9,7 @@ let selectedId = null
 let modal = null
 let addButton = null
 let busy = false
+let joining = null
 let update = null
 let toastTimer
 let version = ''
@@ -32,7 +33,7 @@ function showError(error) {
     /^Error invoking remote method '[^']+': (?:Error: )?/,
     ''
   )
-  const target = document.querySelector('.form-error')
+  const target = document.querySelector('form:not([hidden]) .form-error')
   if (target) target.textContent = message
   else toast(message)
 }
@@ -51,7 +52,11 @@ function render() {
       app.innerHTML = PenViews.onboarding(state.suggestedName)
     return
   }
-  if (!app.querySelector('.shell')) app.innerHTML = PenViews.shell()
+  if (!app.querySelector('.shell')) {
+    const key = app.querySelector('[name=secretKey]')
+    if (key) key.value = ''
+    app.innerHTML = PenViews.shell()
+  }
   const history = app.querySelector('.activity')
   const previousId = app.querySelector('.pen-row.selected')?.dataset.pen
   const top = history?.scrollTop || 0
@@ -92,6 +97,8 @@ function render() {
 
 function drawModal(focus = 'input,textarea,button') {
   if (shuttingDown) return
+  const password = modalRoot.querySelector('input[type="password"]')
+  if (password) password.value = ''
   modalRoot.innerHTML = modal ? PenViews.dialog(modal, state, version) : ''
   if (modal)
     requestAnimationFrame(() => modalRoot.querySelector(focus)?.focus())
@@ -117,6 +124,7 @@ function openModal(value) {
   const focus = {
     add: '[data-room-mode]',
     join: '[name=invite]',
+    'join-proof': '[name=password]',
     'room-invite': '[data-copy-invite]',
     manual: '[data-pen-info]',
     'manual-action': manualFocus
@@ -125,10 +133,12 @@ function openModal(value) {
 }
 
 async function closeModal() {
-  if (modal?.type === 'key-export') await api.clearExport(modal.exportId)
-  if (!modal?.creating) await call('dialog.save', { dialog: null })
+  const closing = modal
   modal = null
   drawModal()
+  if (joining && joining === closing) await call('pen.cancelJoin')
+  if (closing?.type === 'key-export') await api.clearExport(closing.exportId)
+  if (!closing?.creating) await call('dialog.save', { dialog: null })
   if (addButton) {
     const target = addButton.isConnected
       ? addButton
@@ -173,19 +183,30 @@ async function showResult(method, params, title) {
   }
 }
 
-async function exportKey(kind, password) {
-  const exported = await call('profile.export', { kind, password })
+async function exportKey(kind, send = call) {
+  const exported = await send('profile.export', { kind })
   openModal({ type: 'key-export', kind, ...exported })
 }
 
 async function submit(form, operation) {
   if (busy) return
   busy = true
-  const fields = Object.fromEntries(new FormData(form))
+  const view = modal
+  const canCancel = view?.type === 'join' || view?.type === 'join-proof'
   const controls = [...form.querySelectorAll('button,input,textarea,select')]
   const disabled = controls.map((control) => control.disabled)
+  const password = form.elements.password
+  if (password) password.disabled = true
+  if (form.elements.secretKey) form.elements.secretKey.disabled = true
+  const fields = Object.fromEntries(new FormData(form))
+  function send(method, params) {
+    if (!password?.value) return call(method, params)
+    const credentials = { ...params, password: password.value }
+    password.value = ''
+    return call(method, credentials)
+  }
   controls.forEach((control) => {
-    control.disabled = true
+    control.disabled = !(canCancel && control.matches('[data-close]'))
   })
   const button = form.querySelector('button[type=submit]')
   const label = button?.innerHTML
@@ -195,13 +216,13 @@ async function submit(form, operation) {
       modal.method === 'request' &&
       'length' in fields)
   if (button)
-    button.innerHTML = `<span class="spinner" aria-hidden="true"></span>${connecting ? 'Connecting and loading source…' : modal?.type === 'join' ? 'Connecting to inviter…' : 'Working…'}`
+    button.innerHTML = `<span class="spinner" aria-hidden="true"></span>${connecting ? 'Connecting and loading source…' : canCancel ? 'Connecting to inviter…' : 'Working…'}`
   form.setAttribute('aria-busy', 'true')
   form.querySelector('.form-error').textContent = ''
   try {
-    await operation(fields)
+    await operation(fields, send)
   } catch (error) {
-    showError(error)
+    if (!canCancel || view === modal) showError(error)
   } finally {
     busy = false
     controls.forEach((control, index) => {
@@ -213,14 +234,27 @@ async function submit(form, operation) {
 }
 
 function updateImportFields(form) {
-  const { publicKey, secretKey, password } = form.elements
-  const importing = !!(publicKey.value.trim() || secretKey.value.trim())
+  const { publicKey, secretKey } = form.elements
   secretKey.required = !!publicKey.value.trim()
-  if (importing === (password.autocomplete === 'current-password')) return
-  form.querySelector('.key-backup-note').hidden = importing
-  form.querySelector('[data-key-password]').innerHTML =
-    PenViews.onboardingPassword(importing)
+  form.querySelector('.key-backup-note').hidden = !!(
+    publicKey.value.trim() || secretKey.value.trim()
+  )
 }
+
+function showOnboardingPassword(form, username, importing) {
+  form.hidden = true
+  form.insertAdjacentHTML(
+    'afterend',
+    PenViews.onboardingPassword(username, importing)
+  )
+  app.querySelector('.onboarding-unlock [name=password]').focus()
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden)
+    for (const input of document.querySelectorAll('input[type="password"]'))
+      input.value = ''
+})
 
 document.addEventListener('click', async (event) => {
   const button = event.target.closest('[data-passwords]')
@@ -273,14 +307,25 @@ app.addEventListener(
 app.addEventListener('submit', async (event) => {
   event.preventDefault()
   if (busy) return
-  const username = event.target.elements.username
-  const entered = username.value.trim()
-  username.value = entered || username.placeholder
-  await submit(event.target, async ({ username, ...keys }) => {
-    state = await call('profile.import', { name: username, ...keys })
+  const identity = app.querySelector('.onboarding-form')
+  const { username, publicKey, secretKey } = identity.elements
+  const name = username.value.trim() || username.placeholder
+  const generating = !secretKey.value.trim() && !publicKey.value.trim()
+  if (event.target === identity && generating)
+    return showOnboardingPassword(identity, name, false)
+  await submit(event.target, async ({ savePassword }, send) => {
+    const result = await send('profile.import', {
+      name,
+      publicKey: publicKey.value.trim(),
+      secretKey: secretKey.value.trim(),
+      savePassword
+    })
+    if (result.passwordRequired)
+      return showOnboardingPassword(identity, name, true)
+    secretKey.value = ''
+    state = result
     render()
   })
-  if (username.isConnected) username.value = entered
 })
 
 app.addEventListener('click', async (event) => {
@@ -288,6 +333,14 @@ app.addEventListener('click', async (event) => {
   if (!button || busy) return
   const pen = currentPen()
   try {
+    if ('onboardingBack' in button.dataset) {
+      button.form.elements.password.value = ''
+      button.form.remove()
+      const identity = app.querySelector('.onboarding-form')
+      identity.hidden = false
+      identity.elements.username.focus()
+      return
+    }
     if (button.dataset.import) {
       event.preventDefault()
       const value = await api.importFile()
@@ -389,14 +442,13 @@ modalRoot.addEventListener('input', (event) => {
   if (
     modal?.type !== 'configuration' ||
     busy ||
-    ['password', 'username', 'configName'].includes(event.target.name)
+    event.target.name === 'configName'
   )
     return
   PenConfiguration.capture(modal, event.target.form)
   modal.preview = null
   event.target.form.elements.configName.placeholder =
     PenConfiguration.namePlaceholder(modal)
-  modalRoot.querySelector('[data-room-credentials]')?.remove()
   modalRoot.querySelector('[data-config-preview]')?.remove()
   modalRoot.querySelector('button[type=submit]').textContent =
     'Preview configuration'
@@ -404,8 +456,10 @@ modalRoot.addEventListener('input', (event) => {
 
 modalRoot.addEventListener('click', async (event) => {
   const button = event.target.closest('button')
-  if (!button || !modal || busy) return
+  if (!button || !modal) return
   const data = button.dataset
+  if (busy && !('close' in data && ['join', 'join-proof'].includes(modal.type)))
+    return
   const penId = modal.penId
   try {
     if ('roomMode' in data) {
@@ -438,6 +492,8 @@ modalRoot.addEventListener('click', async (event) => {
         })
       } else
         openModal({ ...next, type: data.roomMode === 'join' ? 'join' : 'add' })
+    } else if ('joinBack' in data) {
+      openModal({ ...modal, type: 'join' })
     } else if ('roomInvite' in data) {
       await submit(button.form, async () => {
         const { invite, expiresAt } = await call('pen.invite', { penId })
@@ -544,6 +600,8 @@ modalRoot.addEventListener('click', async (event) => {
     else if ('manual' in data) startManual(data.manual, penId)
     else if ('manualBack' in data || 'pastedRequest' in data) {
       if (modal.reviewOutput) return openModal(modal.reviewOutput)
+      if (button.form.elements.password)
+        button.form.elements.password.value = ''
       PenManual.capture(modal, Object.fromEntries(new FormData(button.form)))
       if ('pastedRequest' in data) modal.pasted = !modal.pasted
       else if (modal.step === 0)
@@ -574,13 +632,8 @@ modalRoot.addEventListener('submit', (event) => {
   event.preventDefault()
   if (modal?.type === 'configuration')
     PenConfiguration.capture(modal, event.target)
-  const descriptor = { ...modal }
-  submit(event.target, async (fields) => {
-    const params = {
-      penId: descriptor.penId,
-      requestId: descriptor.requestId,
-      ...fields
-    }
+  const descriptor = modal
+  submit(event.target, async (fields, send) => {
     if (descriptor.type === 'configuration') {
       if (!descriptor.preview || descriptor.preview.changed) {
         const preview = await call('pen.preview', {
@@ -593,11 +646,7 @@ modalRoot.addEventListener('submit', (event) => {
         ) {
           modal.config = preview.config
           modal.preview = preview
-          drawModal(
-            modal.creating && state.profile.encrypted && !preview.changed
-              ? '[name=password]'
-              : '[data-copy-config-key]'
-          )
+          drawModal('[data-copy-config-key]')
         }
       } else {
         state = await call(
@@ -605,8 +654,7 @@ modalRoot.addEventListener('submit', (event) => {
           {
             ...(descriptor.penId && { penId: descriptor.penId }),
             name: descriptor.name,
-            config: descriptor.config,
-            ...(descriptor.creating && { password: fields.password })
+            config: descriptor.config
           }
         )
         selectedId = descriptor.preview.multisigKey
@@ -623,30 +671,44 @@ modalRoot.addEventListener('submit', (event) => {
       return
     }
     if (descriptor.type === 'key-export-options') {
-      await exportKey('private', fields.password || undefined)
+      await exportKey('private', send)
       return
     }
     if (descriptor.type === 'manual-action') {
-      const result = await PenManual.submit(modal, fields, call)
+      const result = await PenManual.submit(modal, fields, send)
       if (result) await output(result.output, result.title, result)
       else drawModal(manualFocus)
       return
     }
-    if (descriptor.type === 'join') {
-      const existing = new Set(
-        state.pens.filter((pen) => pen.privateRoom).map((pen) => pen.id)
-      )
-      state = await call('pen.join', {
-        penId: descriptor.penId,
-        name: fields.name.trim(),
-        invite: fields.invite.trim(),
-        password: fields.password
-      })
-      selectedId =
-        descriptor.penId ||
-        state.pens.find((pen) => pen.privateRoom && !existing.has(pen.id))
-          ?.id ||
-        selectedId
+    if (descriptor.type === 'join' || descriptor.type === 'join-proof') {
+      if (descriptor.type === 'join') {
+        const invite = fields.invite.trim()
+        const { multisigKey } = await call('pen.inspectInvite', {
+          invite,
+          penId: descriptor.penId
+        })
+        if (modal !== descriptor) return
+        Object.assign(descriptor, {
+          invite,
+          multisigKey,
+          name: fields.name.trim()
+        })
+        if (state.profile.encrypted)
+          return openModal({ ...descriptor, type: 'join-proof' })
+      }
+      joining = descriptor
+      try {
+        const joined = await send('pen.join', {
+          penId: descriptor.penId,
+          name: descriptor.name,
+          invite: descriptor.invite
+        })
+        if (modal !== descriptor) return
+        state = joined
+      } finally {
+        joining = null
+      }
+      selectedId = descriptor.multisigKey
       toast('Room joined')
     } else {
       const methods = {
@@ -657,20 +719,28 @@ modalRoot.addEventListener('submit', (event) => {
       }
       const method = methods[descriptor.type]
       if (!method) return
-      const result = await call(method, params)
+      const result = await send(method, {
+        penId: descriptor.penId,
+        requestId: descriptor.requestId,
+        ...fields
+      })
       if (descriptor.type !== 'commit') state = result
       if (descriptor.type === 'remove' && selectedId === descriptor.penId)
         selectedId = null
     }
     await closeModal()
     render()
-    if (descriptor.type === 'join')
+    if (descriptor.type === 'join' || descriptor.type === 'join-proof')
       app.querySelector('.pen-row.selected')?.focus()
   })
 })
 
 document.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape' && modal?.creating && !busy) {
+  if (
+    event.key === 'Escape' &&
+    modal?.creating &&
+    (!busy || modal.type === 'join' || modal.type === 'join-proof')
+  ) {
     event.preventDefault()
     closeModal().catch(showError)
     return

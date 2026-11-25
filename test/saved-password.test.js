@@ -66,9 +66,10 @@ function setup(t) {
   const filename = require.resolve('../electron/saved-password')
   delete require.cache[filename]
   t.after(() => delete require.cache[filename])
-  const { offerPasswordSave, passwordMenu, savePassword } = require(filename)
+  const { importProfile, passwordMenu, savePassword } = require(filename)
   const request = t.mock.fn(async (method, params) => {
-    if (method === 'state.get') return { profile }
+    if (method === 'state.get' || method === 'profile.import')
+      return { profile }
     assert.equal(method, 'profile.verifyPassword')
     if (params.password !== password) throw new Error('Invalid password')
     return { publicKey }
@@ -80,7 +81,8 @@ function setup(t) {
     return passwordMenu({ window, frame, request, template: [], x: 10, y: 20 })
   }
   return {
-    offerPasswordSave,
+    importProfile: (save) =>
+      importProfile(request, { password }, save, assert.fail),
     savePassword,
     request,
     profile,
@@ -92,15 +94,13 @@ function setup(t) {
   }
 }
 
-test('onboarding saves the generated password only when the user accepts', async (t) => {
-  const { offerPasswordSave, profile, ui, window, vault } = setup(t)
-  ui.answer = /skip|not now|cancel/i
-  await offerPasswordSave(window, profile, password)
+test('onboarding saves the generated password only with prior opt-in', async (t) => {
+  const { importProfile, ui, vault } = setup(t)
+  await importProfile(false)
   assert.equal(vault.size, 0)
-  ui.answer = /save/i
-  await offerPasswordSave(window, profile, password)
+  await importProfile(true)
   assert.equal(vault.get(publicKey), password)
-  assert.equal(ui.prompts.length, 2)
+  assert.equal(ui.prompts.length, 0)
 })
 
 test('saving an existing key password requires verification', async (t) => {
@@ -147,11 +147,10 @@ test('another signer cannot fill the original signer’s password', async (t) =>
   assert.deepEqual(reads, [profile.publicKey])
 })
 
-test('unencrypted profiles skip the offer and credential menu', async (t) => {
-  const { offerPasswordSave, menu, profile, ui, window, vault, reads } =
-    setup(t)
+test('unencrypted profiles skip saving and the credential menu', async (t) => {
+  const { importProfile, menu, profile, ui, vault, reads } = setup(t)
   profile.encrypted = false
-  await offerPasswordSave(window, profile, password)
+  await importProfile(true)
   assert.equal(await menu(/^fill saved/i), null)
   assert.equal(ui.prompts.length, 0)
   assert.deepEqual(reads, [])

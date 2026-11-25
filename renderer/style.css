@@ -706,7 +706,7 @@ small {
   place-items: center;
   padding: 60px 30px;
 }
-.onboarding-form {
+.onboarding-content {
   width: 100%;
   max-width: 360px;
 }
@@ -724,8 +724,15 @@ small {
   text-align: center;
   margin-bottom: 34px;
 }
-.onboarding .primary {
+.onboarding-form .primary {
   margin-top: 24px;
+}
+.save-password-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 18px;
+  font-size: 12px;
 }
 .key-import {
   padding: 14px 0;

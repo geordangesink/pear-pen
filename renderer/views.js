@@ -53,35 +53,44 @@ const PenViews = (() => {
 
   function onboarding(suggestedName) {
     return `<main class="onboarding">
-      <form class="onboarding-form" method="post" autocomplete="on">
+      <section class="onboarding-content">
         <img class="onboarding-icon" src="../assets/mark.svg" alt="" />
         <h1>Pear Pen</h1>
-        ${field('username', 'Username (enter to customize)', suggestedName, { autocomplete: 'username', required: false })}
-        <div data-key-password>${onboardingPassword(false)}</div>
-        <details class="key-import">
-          <summary>Import keys <small>Optional</small>${icon('chevron-down')}</summary>
-          ${field('publicKey', 'Public key', 'Paste or choose a file', { area: true, file: true, required: false })}
-          ${field('secretKey', 'Private key', 'Paste or choose a file', { area: true, file: true, required: false })}
-        </details>
-        <p class="key-backup-note" role="note">After setup, export your keys from Settings and keep a backup. Your password alone can’t recover a lost private key.</p>
-        <div class="form-error" role="alert"></div>
-        <button class="primary full" type="submit">Continue ${icon('chevron-forward')}</button>
-      </form>
+        <form class="onboarding-form" method="post" autocomplete="on">
+          ${field('username', 'Username (enter to customize)', suggestedName, { autocomplete: 'username', required: false })}
+          <details class="key-import">
+            <summary>Import keys <small>Optional</small>${icon('chevron-down')}</summary>
+            ${field('publicKey', 'Public key', 'Paste or choose a file', { area: true, file: true, required: false })}
+            ${field('secretKey', 'Private key', 'Paste or choose a file', { area: true, file: true, required: false })}
+          </details>
+          <p class="key-backup-note" role="note">After setup, export your keys from Settings and keep a backup. Your password alone can’t recover a lost private key.</p>
+          <div class="form-error" role="alert"></div>
+          <button class="primary full" type="submit">Continue ${icon('chevron-forward')}</button>
+        </form>
+      </section>
     </main>`
   }
 
-  function onboardingPassword(importing) {
-    return field(
-      'password',
-      importing ? 'Key password' : 'Create password',
-      importing ? 'If your key is encrypted' : 'Used when you sign',
-      {
-        type: 'password',
-        autocomplete: importing ? 'current-password' : 'new-password',
-        passwords: !!window.pen.isMac,
-        required: !importing
-      }
-    )
+  function onboardingPassword(username, importing) {
+    return `<form class="onboarding-unlock" method="post" autocomplete="on">
+      <input type="hidden" name="username" autocomplete="username" value="${esc(username)}" />
+      ${field(
+        'password',
+        importing ? 'Key password' : 'Create password',
+        importing ? 'Enter your key password' : 'Used when you sign',
+        {
+          type: 'password',
+          autocomplete: importing ? 'current-password' : 'new-password',
+          passwords: !!window.pen.isMac
+        }
+      )}
+      <label class="save-password-option"><input type="checkbox" name="savePassword" /> Save password on this device</label>
+      <div class="form-error" role="alert"></div>
+      <div class="modal-actions">
+        <button type="button" class="secondary" data-onboarding-back>Back</button>
+        <button type="submit" class="primary">Continue ${icon('chevron-forward')}</button>
+      </div>
+    </form>`
   }
 
   function penRow(pen, selectedId, mode) {
@@ -406,12 +415,17 @@ const PenViews = (() => {
         intro = 'Paste an invite from a signer who is online.'
         body =
           field('invite', 'Room invite', 'pear-pen://invite/…', {
-            area: true
-          }) +
-          (state.profile.encrypted ? signingCredentials(state.profile) : '') +
-          roomDetails(modal)
+            area: true,
+            value: modal.invite
+          }) + roomDetails(modal)
+        action = `<button type="button" class="secondary" data-room-mode="choose">Back</button><button type="submit" class="primary">${state.profile.encrypted ? 'Continue' : 'Join room'}</button>`
+        break
+      case 'join-proof':
+        title = 'Verify your signing key'
+        intro = 'Enter your key password to join this room.'
+        body = signingCredentials(state.profile)
         action =
-          '<button type="button" class="secondary" data-room-mode="choose">Back</button><button type="submit" class="primary">Join room</button>'
+          '<button type="button" class="secondary" data-join-back>Back</button><button type="submit" class="primary">Join room</button>'
         break
       case 'room-invite':
         title = 'Invite a signer'
@@ -507,15 +521,7 @@ const PenViews = (() => {
         intro = modal.creating
           ? 'Invitees receive this configuration after they prove they are one of its signers.'
           : ''
-        body = PenConfiguration.render(modal)
-        if (
-          modal.creating &&
-          modal.preview &&
-          !modal.preview.changed &&
-          state.profile.encrypted
-        )
-          body += `<div data-room-credentials>${signingCredentials(state.profile)}</div>`
-        body += roomDetails(modal)
+        body = PenConfiguration.render(modal) + roomDetails(modal)
         action = `<button type="button" class="secondary" ${modal.creating ? 'data-room-mode="choose"' : 'data-pen-info'}>${icon('chevron-back')} Back</button><button type="submit" class="primary">${modal.preview && !modal.preview.changed ? (modal.creating ? 'Create room' : 'Save configuration') : 'Preview configuration'}</button>`
         break
     }

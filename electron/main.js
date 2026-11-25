@@ -16,7 +16,7 @@ const { pathToFileURL } = require('url')
 const PearPenCore = require('pear-pen-core')
 const {
   passwordMenu,
-  offerPasswordSave,
+  importProfile,
   savePassword
 } = require('./saved-password')
 const { command, flag } = require('paparam')
@@ -98,7 +98,8 @@ function startWorker() {
       return
     }
     if (message.type === 'progress') {
-      for (const operation of pending.values()) operation.timer.refresh()
+      for (const operation of pending.values())
+        if (operation.method !== 'pen.join') operation.timer.refresh()
       return
     }
     if (message.id !== undefined) {
@@ -106,7 +107,12 @@ function startWorker() {
       if (!operation) return
       clearTimeout(operation.timer)
       pending.delete(message.id)
-      if (message.error)
+      if (
+        operation.method === 'profile.import' &&
+        message.error?.code === 'PASSWORD_REQUIRED'
+      )
+        operation.resolve({ passwordRequired: true })
+      else if (message.error)
         operation.reject(
           new Error(
             typeof message.error === 'string'
@@ -143,20 +149,32 @@ function startWorker() {
   })
 }
 
-function request(method, params) {
+function request(method, params = {}) {
   startWorker()
   const id = ++sequence
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       pending.delete(id)
+      if (method === 'pen.join') request('pen.cancelJoin').catch(() => {})
       reject(
         new Error(
-          'This operation timed out. Check that the source drive is being seeded and try again.'
+          method === 'pen.join'
+            ? 'The inviter did not respond in time. Keep the inviter online and try again.'
+            : 'This operation timed out. Check that the source drive is being seeded and try again.'
         )
       )
     }, 120000)
-    pending.set(id, { resolve, reject, timer })
-    pipe.write(JSON.stringify({ id, method, params }))
+    pending.set(id, { resolve, reject, timer, method })
+    try {
+      pipe.write(JSON.stringify({ id, method, params }))
+    } catch (error) {
+      clearTimeout(timer)
+      pending.delete(id)
+      reject(error)
+    } finally {
+      delete params.password
+      delete params.secretKey
+    }
   })
 }
 
@@ -224,20 +242,17 @@ ipcMain.handle('pen:savePassword', (event, password) => {
 ipcMain.handle('pen:request', async (event, method, params) => {
   if (typeof method !== 'string' || method.length > 64)
     throw new Error('Invalid operation')
-  const result = await request(method, params)
-  if (
-    method === 'profile.import' &&
-    result.profile?.encrypted &&
-    params.password &&
-    isPasswordFrame(event)
-  ) {
-    offerPasswordSave(window, result.profile, params.password).catch(() =>
+  if (method === 'profile.import') {
+    const save = params.savePassword === 'on' && isPasswordFrame(event)
+    delete params.savePassword
+    return importProfile(request, params, save, () =>
       publish({
         type: 'warning',
         message: 'Your signing key is ready. The password could not be saved.'
       })
     )
   }
+  const result = await request(method, params)
   if (method !== 'profile.export') return result
   const exportId = ++exportSequence
   keyExport = { ...result, exportId, kind: params.kind }

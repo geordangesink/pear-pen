@@ -214,7 +214,7 @@ const PenManual = (() => {
         length: Number(inputs.length)
       }
     } else if (method === 'sign') {
-      params = { request: inputs.request, password: fields.password }
+      params = { request: inputs.request }
     } else if (method === 'submitResponse') {
       params = { requestId: modal.requestId, response: inputs.response }
     } else {

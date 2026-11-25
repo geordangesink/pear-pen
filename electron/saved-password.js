@@ -24,26 +24,12 @@ async function savePassword(request, password) {
   await storePassword(publicKey, password)
 }
 
-async function offerPasswordSave(window, profile, password) {
-  if (!profile?.encrypted || !password || !window || window.isDestroyed())
-    return
-  try {
-    const { response } = await dialog.showMessageBox(window, {
-      message: 'Save your signing password on this device?',
-      detail:
-        'Pear Pen can fill it from your system credential store when you sign.',
-      buttons: ['Save password', 'Skip'],
-      defaultId: 1,
-      cancelId: 1
-    })
-    if (response === 0) await storePassword(profile.publicKey, password)
-  } catch {
-    if (!window.isDestroyed())
-      await dialog.showMessageBox(window, {
-        message:
-          'Your signing key is ready. The password could not be saved on this device.'
-      })
-  }
+async function importProfile(request, params, save, onSaveError) {
+  const password = save ? params.password : undefined
+  const result = await request('profile.import', params)
+  if (password && result.profile?.encrypted)
+    await storePassword(result.profile.publicKey, password).catch(onSaveError)
+  return result
 }
 
 async function passwordMenu({ window, frame, request, template, x, y }) {
@@ -100,4 +86,4 @@ async function passwordMenu({ window, frame, request, template, x, y }) {
   return { action: 'fill', password }
 }
 
-module.exports = { offerPasswordSave, passwordMenu, savePassword }
+module.exports = { importProfile, passwordMenu, savePassword }
