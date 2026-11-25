@@ -1,10 +1,13 @@
 const {
   app,
   BrowserWindow,
+  Menu,
   ipcMain,
   clipboard,
   dialog,
-  shell
+  shell,
+  nativeImage,
+  nativeTheme
 } = require('electron')
 const fs = require('fs/promises')
 const path = require('path')
@@ -35,9 +38,13 @@ let keyExport = null
 let updateResolve
 let quitting = false
 let workerStopped = false
+let shutdownWorker
+let shutdownTimer
 const pending = new Map()
+const shutdownMessage = 'Pear Pen is shutting down.'
 
 function publish(message) {
+  if (message.type === 'state') setTheme(message.state?.settings?.theme)
   if (window && !window.isDestroyed())
     window.webContents.send('pen:event', message)
 }
@@ -51,6 +58,7 @@ function rejectPending(message) {
 }
 
 function startWorker() {
+  if (quitting) throw new Error(shutdownMessage)
   if (pipe) return
   const linux = process.platform === 'linux'
   const mac = process.platform === 'darwin'
@@ -81,6 +89,10 @@ function startWorker() {
     try {
       message = JSON.parse(data.toString())
     } catch {
+      return
+    }
+    if (message.type === 'progress') {
+      for (const operation of pending.values()) operation.timer.refresh()
       return
     }
     if (message.id !== undefined) {
@@ -117,6 +129,7 @@ function startWorker() {
   worker.once('exit', () => {
     pipe = null
     rejectPending('The signing service stopped. Try again to reconnect.')
+    if (quitting) return
     publish({
       type: 'error',
       message: 'The signing service stopped. Try again to reconnect.'
@@ -155,16 +168,46 @@ ipcMain.handle('pen:copy', (_, text) => {
   if (typeof text !== 'string') throw new Error('Invalid clipboard text')
   clipboard.writeText(text)
 })
-ipcMain.handle('pen:importFile', async () => {
+ipcMain.handle('pen:importFile', async (_, kind) => {
   const result = await dialog.showOpenDialog(window, {
     properties: ['openFile'],
-    title: 'Import signing key'
+    title:
+      kind === 'multisig'
+        ? 'Import multisig configuration'
+        : 'Import signing key'
   })
   if (result.canceled) return null
   const file = result.filePaths[0]
   if ((await fs.stat(file)).size > 65536)
-    throw new Error('Choose a key file smaller than 64 KB.')
+    throw new Error('Choose a text file smaller than 64 KB.')
   return fs.readFile(file, 'utf8')
+})
+ipcMain.handle('pen:chooseImage', async () => {
+  const result = await dialog.showOpenDialog(window, {
+    properties: ['openFile'],
+    title: 'Choose a room image',
+    filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] }]
+  })
+  if (result.canceled) return null
+  const file = result.filePaths[0]
+  if ((await fs.stat(file)).size > 20 * 1024 * 1024)
+    throw new Error('Choose an image smaller than 20 MB.')
+  const image = nativeImage.createFromPath(file)
+  if (image.isEmpty()) throw new Error('Choose a JPEG, PNG, or WebP image.')
+  const { width, height } = image.getSize()
+  const side = Math.min(width, height)
+  const thumbnail = image
+    .crop({
+      x: Math.floor((width - side) / 2),
+      y: Math.floor((height - side) / 2),
+      width: side,
+      height: side
+    })
+    .resize({ width: 192, height: 192 })
+  const png = thumbnail.toDataURL()
+  return png.length <= 128 * 1024
+    ? png
+    : `data:image/jpeg;base64,${thumbnail.toJPEG(85).toString('base64')}`
 })
 ipcMain.handle('pen:clearExport', (_, exportId) => {
   if (keyExport?.exportId === exportId) keyExport = null
@@ -196,12 +239,21 @@ ipcMain.handle('pen:saveKey', async (_, exportId) => {
   }
   return true
 })
-ipcMain.handle('pen:openHelp', () =>
-  shell.openExternal(
+const helpLinks = new Map([
+  [
+    'multisig',
     'https://docs.pears.com/pear/how-to/operate-an-app/multisig/set-up-multisig/'
-  )
-)
+  ],
+  ['privacy', 'https://realpainpoints.com/pear-pen/privacy'],
+  ['support', 'https://realpainpoints.com/pear-pen']
+])
+ipcMain.handle('pen:openHelp', (_, topic = 'multisig') => {
+  const url = helpLinks.get(topic)
+  if (!url) throw new Error('Unknown help topic.')
+  return shell.openExternal(url)
+})
 ipcMain.handle('pen:applyUpdate', async () => {
+  if (quitting) throw new Error(shutdownMessage)
   if (updateResolve) throw new Error('An update is already being installed.')
   const result = await new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -233,14 +285,25 @@ ipcMain.handle('pen:applyUpdate', async () => {
   app.quit()
 })
 
+function setTheme(preference) {
+  const source = ['light', 'dark'].includes(preference) ? preference : 'system'
+  if (nativeTheme.themeSource !== source) nativeTheme.themeSource = source
+}
+
+function canvasColor() {
+  return nativeTheme.shouldUseDarkColors ? '#1b1f1a' : '#fafaf7'
+}
+
 async function createWindow() {
+  if (quitting) return
   window = new BrowserWindow({
     title: 'Pear Pen',
+    show: false,
     width: 1160,
     height: 800,
     minWidth: 800,
     minHeight: 600,
-    backgroundColor: '#fafaf7',
+    backgroundColor: canvasColor(),
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 20, y: 20 },
     webPreferences: {
@@ -250,12 +313,44 @@ async function createWindow() {
       nodeIntegration: false
     }
   })
+  window.once('ready-to-show', () => {
+    if (!quitting) window.show()
+  })
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   window.webContents.on('will-navigate', (event) => event.preventDefault())
+  if (process.platform === 'darwin') {
+    window.webContents.on('context-menu', (_, { isEditable, frame }) => {
+      if (isEditable && frame)
+        Menu.buildFromTemplate([
+          { role: 'cut' },
+          { role: 'copy' },
+          { role: 'paste' }
+        ]).popup({ window, frame })
+    })
+  }
+  window.on('close', (event) => {
+    if (workerStopped) return
+    if (quitting) {
+      event.preventDefault()
+      forceQuit()
+    } else if (pipe && process.platform !== 'darwin') {
+      event.preventDefault()
+      app.quit()
+    }
+  })
   window.once('closed', () => {
     keyExport = null
   })
   await window.loadFile(path.join(__dirname, '../renderer/index.html'))
+}
+
+function forceQuit() {
+  workerStopped = true
+  clearTimeout(shutdownTimer)
+  try {
+    shutdownWorker?.kill('SIGKILL')
+  } catch {}
+  app.exit(0)
 }
 
 if (!app.requestSingleInstanceLock()) app.quit()
@@ -268,27 +363,47 @@ else {
   })
   app
     .whenReady()
-    .then(createWindow)
+    .then(async () => {
+      const file = path.join(app.getPath('userData'), 'pear-pen', 'state.json')
+      let theme
+      try {
+        theme = JSON.parse(await fs.readFile(file, 'utf8')).settings?.theme
+      } catch {}
+      setTheme(theme)
+      nativeTheme.on('updated', () => {
+        if (window && !window.isDestroyed())
+          window.setBackgroundColor(canvasColor())
+      })
+      app.on('activate', () => {
+        if (!BrowserWindow.getAllWindows().length) createWindow()
+      })
+      await createWindow()
+    })
     .catch(() => app.quit())
-  app.on('activate', () => {
-    if (!BrowserWindow.getAllWindows().length) createWindow()
-  })
   app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit()
   })
   app.on('before-quit', (event) => {
-    if (!pipe || workerStopped) return
-    event.preventDefault()
-    if (quitting) return
+    if (workerStopped) return
+    if (quitting) {
+      event.preventDefault()
+      forceQuit()
+      return
+    }
     quitting = true
-    const running = worker
-    const timeout = setTimeout(() => {
-      running.kill('SIGKILL')
+    keyExport = null
+    publish({ type: 'shutdown' })
+    rejectPending(shutdownMessage)
+    if (!pipe) {
       workerStopped = true
-      app.quit()
-    }, 5000)
-    running.once('exit', () => {
-      clearTimeout(timeout)
+      return
+    }
+    event.preventDefault()
+    shutdownWorker = worker
+    shutdownTimer = setTimeout(forceQuit, 5000)
+    shutdownWorker.once('exit', () => {
+      if (workerStopped) return
+      clearTimeout(shutdownTimer)
       workerStopped = true
       app.quit()
     })

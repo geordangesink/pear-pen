@@ -1,20 +1,24 @@
 const api = window.pen
 const app = document.querySelector('#app')
 const modalRoot = document.querySelector('#modal-root')
-const media = matchMedia('(prefers-color-scheme: dark)')
 const { activeRequest } = PenViews
 const call = (method, params = {}) => api.request(method, params)
+const renderedSections = new WeakMap()
 let state
 let selectedId = null
 let modal = null
+let addButton = null
 let busy = false
 let update = null
 let toastTimer
 let version = ''
+let shuttingDown = false
 
-const currentPen = () => state?.pens.find((pen) => pen.id === selectedId)
+const currentPen = () =>
+  state?.pens.find((pen) => pen.id === selectedId) || state?.pens[0]
 
 function toast(message) {
+  if (shuttingDown) return
   const target = document.querySelector('#toast')
   target.textContent = message
   target.classList.add('visible')
@@ -23,46 +27,81 @@ function toast(message) {
 }
 
 function showError(error) {
+  if (shuttingDown) return
+  const message = (error.message || String(error)).replace(
+    /^Error invoking remote method '[^']+': (?:Error: )?/,
+    ''
+  )
   const target = document.querySelector('.form-error')
-  if (target) target.textContent = error.message || String(error)
-  else toast(error.message || String(error))
+  if (target) target.textContent = message
+  else toast(message)
 }
 
-function applyTheme() {
-  const theme = state?.settings.theme || 'system'
-  document.documentElement.dataset.theme =
-    theme === 'system' ? (media.matches ? 'dark' : 'light') : theme
+function renderSection(selector, markup, root = app) {
+  const section = root.querySelector(selector)
+  if (renderedSections.get(section) === markup) return
+  section.innerHTML = markup
+  renderedSections.set(section, markup)
 }
-media.addEventListener('change', applyTheme)
 
 function render() {
-  applyTheme()
+  if (shuttingDown) return
   if (!state?.profile) {
-    app.innerHTML = PenViews.onboarding()
+    if (!app.querySelector('.onboarding-form'))
+      app.innerHTML = PenViews.onboarding(state.suggestedName)
     return
   }
+  if (!app.querySelector('.shell')) app.innerHTML = PenViews.shell()
   const history = app.querySelector('.activity')
   const previousId = app.querySelector('.pen-row.selected')?.dataset.pen
   const top = history?.scrollTop || 0
   const atBottom =
     !history || history.scrollHeight - top - history.clientHeight < 40
-  if (!currentPen()) selectedId = state.pens[0]?.id || null
-  app.innerHTML = PenViews.shell(state, selectedId, update)
+  const pen = currentPen()
+  app.querySelector('[data-pen-count]').textContent = state.pens.length
+  renderSection(
+    '.pen-list',
+    state.pens
+      .map((item) => PenViews.penRow(item, pen?.id, state.settings.mode))
+      .join('')
+  )
+  renderSection('.sidebar-bottom', PenViews.identity(state.profile))
+  renderSection(
+    '.workspace-bar',
+    PenViews.workspaceBar(pen, state.settings.mode)
+  )
+  renderSection('.update-slot', PenViews.updateBanner(update))
+  renderSection(
+    '.workspace-content',
+    pen ? PenViews.detail(pen, state) : PenViews.emptyWorkspace()
+  )
   const nextHistory = app.querySelector('.activity')
-  if (nextHistory)
+  if (nextHistory && history !== nextHistory)
     nextHistory.scrollTop =
-      previousId === selectedId && !atBottom ? top : nextHistory.scrollHeight
+      previousId === pen?.id && !atBottom ? top : nextHistory.scrollHeight
+  if (modal?.type === 'pen-info') {
+    const inspected = state.pens.find((item) => item.id === modal.penId)
+    if (inspected)
+      renderSection('[data-pen-facts]', PenViews.penFacts(inspected), modalRoot)
+  }
 }
 
-function drawModal() {
+function drawModal(focus = 'input,textarea,button') {
+  if (shuttingDown) return
   modalRoot.innerHTML = modal ? PenViews.dialog(modal, state, version) : ''
   if (modal)
-    requestAnimationFrame(() =>
-      modalRoot.querySelector('input,textarea,button')?.focus()
-    )
+    requestAnimationFrame(() => modalRoot.querySelector(focus)?.focus())
+}
+
+const manualFocus = 'textarea, input:not([readonly]), button[type="submit"]'
+
+function startManual(method, penId) {
+  const pen = state.pens.find((item) => item.id === penId)
+  openModal(PenManual.start(method, pen, state.profile.encrypted))
 }
 
 function openModal(value) {
+  if (shuttingDown) return
   if (['sign', 'commit'].includes(value.type)) {
     const request = activeRequest(
       state.pens.find((pen) => pen.id === value.penId)
@@ -70,28 +109,41 @@ function openModal(value) {
     value = { ...value, requestId: request?.id, srcKey: request?.srcKey }
   }
   modal = value
-  drawModal()
+  const focus = {
+    add: '[name="multisigKey"]',
+    manual: '[data-pen-info]',
+    'manual-action': manualFocus
+  }
+  drawModal(focus[value.type])
 }
 
 async function closeModal() {
   if (modal?.type === 'key-export') await api.clearExport(modal.exportId)
-  await call('dialog.save', { dialog: null })
+  if (!modal?.creating) await call('dialog.save', { dialog: null })
   modal = null
   drawModal()
+  if (addButton) {
+    const target = addButton.isConnected
+      ? addButton
+      : app.querySelector('.add-pen')
+    target?.focus()
+    addButton = null
+  }
 }
 
 async function copy(value, hint = false) {
   await api.copy(value)
   if (hint)
-    modalRoot.querySelector('.output-hint').textContent =
-      'Copied to clipboard · click to copy again'
+    modalRoot.querySelector('.output-hint').innerHTML =
+      `${icon('checkmark-circle-outline')} Copied to clipboard · click to copy again`
   else toast('Copied to clipboard')
 }
 
-async function output(value, title = 'Ready to share.') {
+async function output(value, title = 'Ready to share.', details) {
   const next = {
     type: 'output',
     title,
+    ...(details && { details }),
     output: typeof value === 'string' ? value : JSON.stringify(value, null, 2)
   }
   await call('dialog.save', { dialog: next })
@@ -117,39 +169,75 @@ async function exportKey(kind, password) {
 async function submit(form, operation) {
   if (busy) return
   busy = true
-  const buttons = [...form.querySelectorAll('button')]
-  const disabled = buttons.map((button) => button.disabled)
-  buttons.forEach((button) => {
-    button.disabled = true
+  const fields = Object.fromEntries(new FormData(form))
+  const controls = [...form.querySelectorAll('button,input,textarea,select')]
+  const disabled = controls.map((control) => control.disabled)
+  controls.forEach((control) => {
+    control.disabled = true
   })
   const button = form.querySelector('button[type=submit]')
-  const label = button?.textContent
-  if (button) button.textContent = 'Working…'
+  const label = button?.innerHTML
+  const connecting =
+    modal?.type === 'request' ||
+    (modal?.type === 'manual-action' &&
+      modal.method === 'request' &&
+      'length' in fields)
+  if (button)
+    button.innerHTML = `<span class="spinner" aria-hidden="true"></span>${connecting ? 'Connecting and loading source…' : 'Working…'}`
+  form.setAttribute('aria-busy', 'true')
   form.querySelector('.form-error').textContent = ''
   try {
-    await operation(Object.fromEntries(new FormData(form)))
+    await operation(fields)
   } catch (error) {
     showError(error)
   } finally {
     busy = false
-    buttons.forEach((button, index) => {
-      button.disabled = disabled[index]
+    controls.forEach((control, index) => {
+      control.disabled = disabled[index]
     })
-    if (button?.isConnected) button.textContent = label
+    form.removeAttribute('aria-busy')
+    if (button?.isConnected) button.innerHTML = label
   }
 }
 
-app.addEventListener('input', (event) => {
-  if (event.target.name === 'secretKey')
-    app.querySelector('[data-key-password]').hidden = !event.target.value.trim()
+function updateImportFields(form) {
+  const { publicKey, secretKey, password } = form.elements
+  const importing = !!(publicKey.value.trim() || secretKey.value.trim())
+  secretKey.required = !!publicKey.value.trim()
+  if (importing === (password.autocomplete === 'current-password')) return
+  form.querySelector('.key-backup-note').hidden = importing
+  form.querySelector('[data-key-password]').innerHTML =
+    PenViews.onboardingPassword(importing)
+}
+
+app.addEventListener('input', ({ target }) => {
+  if (target.name === 'publicKey' || target.name === 'secretKey')
+    updateImportFields(target.form)
 })
 
-app.addEventListener('submit', (event) => {
+app.addEventListener(
+  'toggle',
+  ({ target }) => {
+    if (!target.matches('.key-import') || target.open) return
+    const form = target.closest('form')
+    form.elements.publicKey.value = ''
+    form.elements.secretKey.value = ''
+    updateImportFields(form)
+  },
+  true
+)
+
+app.addEventListener('submit', async (event) => {
   event.preventDefault()
-  submit(event.target, async (params) => {
-    state = await call('profile.import', params)
+  if (busy) return
+  const username = event.target.elements.username
+  const entered = username.value.trim()
+  username.value = entered || username.placeholder
+  await submit(event.target, async ({ username, ...keys }) => {
+    state = await call('profile.import', { name: username, ...keys })
     render()
   })
+  if (username.isConnected) username.value = entered
 })
 
 app.addEventListener('click', async (event) => {
@@ -175,16 +263,15 @@ app.addEventListener('click', async (event) => {
       return
     }
     const action = button.dataset.action
+    if (action === 'add') {
+      addButton = button
+      openModal({ type: 'add', creating: true })
+      return
+    }
     if (
-      [
-        'settings',
-        'add',
-        'manual',
-        'request',
-        'sign',
-        'commit',
-        'pen-info'
-      ].includes(action)
+      ['settings', 'manual', 'request', 'sign', 'commit', 'pen-info'].includes(
+        action
+      )
     ) {
       openModal({ type: action, penId: pen?.id })
       return
@@ -207,12 +294,28 @@ app.addEventListener('click', async (event) => {
         return await showResult(
           'request.review',
           { penId: pen.id, requestId: activeRequest(pen)?.id },
-          'Review the release.'
+          'Review'
         )
+      case 'activity-verify':
       case 'activity-output': {
         const item = pen.activity.find(
           (item) => item.id === button.dataset.event
         )
+        if (action === 'activity-verify') {
+          busy = true
+          try {
+            const { response, request, author } = item
+            const result = await PenManual.verify(
+              pen.id,
+              { response, request, publicKey: author },
+              call
+            )
+            await output(result.output, result.title)
+          } finally {
+            busy = false
+          }
+          return
+        }
         const response = button.dataset.payload === 'response'
         const payload = response ? item?.response : item?.request
         if (payload)
@@ -235,21 +338,123 @@ app.addEventListener('click', async (event) => {
   }
 })
 
+modalRoot.addEventListener('input', (event) => {
+  if (modal?.type !== 'configuration' || busy) return
+  PenConfiguration.capture(modal, event.target.form)
+  modal.preview = null
+  modalRoot.querySelector('[data-config-preview]')?.remove()
+  modalRoot.querySelector('button[type=submit]').textContent =
+    'Preview configuration'
+})
+
 modalRoot.addEventListener('click', async (event) => {
   const button = event.target.closest('button')
   if (!button || !modal || busy) return
   const data = button.dataset
   const penId = modal.penId
   try {
-    if ('close' in data) await closeModal()
+    if ('addMode' in data) {
+      if (modal.type === 'configuration')
+        PenConfiguration.capture(modal, button.form)
+      else {
+        modal.name = button.form.elements.name.value
+        modal.link = button.form.elements.multisigKey.value
+      }
+      openModal({
+        type: data.addMode === 'config' ? 'configuration' : 'add',
+        creating: true,
+        name: modal.name,
+        link: modal.link,
+        configMode: 'fields',
+        config:
+          modal.config ||
+          JSON.stringify(
+            { multisig: { namespace: '', quorum: 1, publicKeys: [''] } },
+            null,
+            2
+          )
+      })
+    } else if ('close' in data) await closeModal()
     else if ('copyOutput' in data) {
       event.preventDefault()
       await copy(modal.output, true)
     } else if ('copyKey' in data) await copy(modal.key, true)
     else if ('copyPublic' in data) await copy(state.profile.publicKey)
     else if ('copyDrive' in data)
-      await copy(state.pens.find((pen) => pen.id === penId).multisigKey)
-    else if ('saveKey' in data) {
+      await copy(
+        `pear://${state.pens.find((pen) => pen.id === penId).multisigKey}`
+      )
+    else if ('chooseImage' in data || 'removeImage' in data) {
+      button.disabled = true
+      try {
+        const image = 'removeImage' in data ? null : await api.chooseImage()
+        if (image === null && !('removeImage' in data)) return
+        state = await call('pen.image', { penId, image })
+        render()
+        drawModal()
+      } finally {
+        button.disabled = false
+      }
+    } else if ('editConfig' in data) {
+      button.disabled = true
+      try {
+        const { config } = await call('pen.configuration', { penId })
+        if (modal?.type !== 'pen-info' || modal.penId !== penId) return
+        const pen = state.pens.find((item) => item.id === penId)
+        openModal({
+          type: 'configuration',
+          penId,
+          multisigKey: pen.multisigKey,
+          config,
+          configMode: 'fields',
+          name: pen.name === `pear://${pen.multisigKey}` ? '' : pen.name
+        })
+      } finally {
+        button.disabled = false
+      }
+    } else if (
+      'importConfig' in data ||
+      'configMode' in data ||
+      'addSigner' in data ||
+      'removeSigner' in data
+    ) {
+      const descriptor = modal
+      let focus
+      PenConfiguration.capture(descriptor, button.form)
+      if ('importConfig' in data) {
+        await submit(button.form, async () => {
+          const config = await api.importFile('multisig')
+          if (config === null || modal !== descriptor) return
+          descriptor.config = JSON.stringify(
+            PenConfiguration.read(config),
+            null,
+            2
+          )
+          descriptor.preview = null
+          drawModal()
+        })
+        return
+      } else if ('configMode' in data) {
+        if (data.configMode === 'fields')
+          PenConfiguration.read(descriptor.config)
+        descriptor.configMode = data.configMode
+        focus =
+          data.configMode === 'json' ? '[name=configJson]' : '[name=configName]'
+      } else {
+        const count = PenConfiguration.signer(
+          descriptor,
+          'removeSigner' in data ? Number(data.removeSigner) : undefined
+        )
+        focus =
+          'removeSigner' in data
+            ? '[data-add-signer]'
+            : `[name="signerKey_${count - 1}"]`
+        descriptor.preview = null
+      }
+      drawModal(focus)
+    } else if ('copyConfigKey' in data) {
+      await copy(`pear://${modal.preview.multisigKey}`)
+    } else if ('saveKey' in data) {
       button.disabled = true
       try {
         if (await api.saveKey(modal.exportId)) toast('Key exported')
@@ -260,9 +465,15 @@ modalRoot.addEventListener('click', async (event) => {
       if (data.exportKey === 'private' && !state.profile.encrypted)
         openModal({ type: 'key-export-options' })
       else await exportKey(data.exportKey)
-    } else if ('help' in data) await api.openHelp()
-    else if ('manual' in data)
-      openModal({ type: 'manual-action', method: data.manual, penId })
+    } else if ('help' in data) await api.openHelp(data.help || undefined)
+    else if ('manual' in data) startManual(data.manual, penId)
+    else if ('manualBack' in data || 'pastedRequest' in data) {
+      PenManual.capture(modal, Object.fromEntries(new FormData(button.form)))
+      if ('pastedRequest' in data) modal.pasted = !modal.pasted
+      else if (modal.step === 0) return openModal({ type: 'manual', penId })
+      else modal.step--
+      drawModal(manualFocus)
+    } else if ('penInfo' in data) openModal({ type: 'pen-info', penId })
     else if ('setting' in data) {
       state = await call('settings.update', { [data.setting]: data.value })
       render()
@@ -274,7 +485,6 @@ modalRoot.addEventListener('click', async (event) => {
       render()
       toast('Name updated')
     } else if ('remove' in data) openModal({ type: 'remove', penId })
-    else if ('newRequest' in data) openModal({ type: 'request', penId })
     else if ('cancelRemove' in data) openModal({ type: 'pen-info', penId })
   } catch (error) {
     showError(error)
@@ -283,6 +493,8 @@ modalRoot.addEventListener('click', async (event) => {
 
 modalRoot.addEventListener('submit', (event) => {
   event.preventDefault()
+  if (modal?.type === 'configuration')
+    PenConfiguration.capture(modal, event.target)
   const descriptor = { ...modal }
   submit(event.target, async (fields) => {
     const params = {
@@ -290,35 +502,50 @@ modalRoot.addEventListener('submit', (event) => {
       requestId: descriptor.requestId,
       ...fields
     }
+    if (descriptor.type === 'configuration') {
+      if (!descriptor.preview || descriptor.preview.changed) {
+        const preview = await call('pen.preview', {
+          ...(descriptor.penId && { penId: descriptor.penId }),
+          config: descriptor.config
+        })
+        if (
+          modal?.type === 'configuration' &&
+          modal.penId === descriptor.penId
+        ) {
+          modal.config = preview.config
+          modal.preview = preview
+          drawModal('[data-copy-config-key]')
+        }
+      } else {
+        state = await call(descriptor.creating ? 'pen.add' : 'pen.configure', {
+          ...(descriptor.penId && { penId: descriptor.penId }),
+          name: descriptor.name,
+          config: descriptor.config
+        })
+        selectedId = descriptor.preview.multisigKey
+        if (descriptor.creating) {
+          await closeModal()
+          render()
+          app.querySelector('.pen-row.selected')?.focus()
+        } else {
+          render()
+          openModal({ type: 'pen-info', penId: descriptor.penId })
+        }
+        toast(descriptor.creating ? 'Pen added' : 'Configuration saved')
+      }
+      return
+    }
     if (descriptor.type === 'key-export-options') {
       await exportKey('private', fields.password || undefined)
       return
     }
     if (descriptor.type === 'manual-action') {
-      if (typeof params.responses === 'string')
-        params.responses = params.responses.split(/\s+/).filter(Boolean)
-      const result = await call(`manual.${descriptor.method}`, params)
-      await output(
-        result.output ?? result,
-        descriptor.method === 'review'
-          ? 'Review the release.'
-          : 'Ready to share.'
-      )
+      const result = await PenManual.submit(modal, fields, call)
+      if (result) await output(result.output, result.title, result.details)
+      else drawModal(manualFocus)
       return
     }
     if (descriptor.type === 'add') {
-      const quorum = params.quorum.trim()
-      if (
-        quorum &&
-        (!/^\d+$/.test(quorum) ||
-          !Number.isSafeInteger(Number(quorum)) ||
-          Number(quorum) < 1)
-      )
-        throw new Error(
-          'Enter a positive whole number for quorum, or leave it blank.'
-        )
-      if (quorum) params.quorum = Number(quorum)
-      else delete params.quorum
       const existing = new Set(state.pens.map((pen) => pen.id))
       state = await call('pen.add', params)
       selectedId = state.pens.find((pen) => !existing.has(pen.id))?.id || null
@@ -333,13 +560,22 @@ modalRoot.addEventListener('submit', (event) => {
       if (!method) return
       const result = await call(method, params)
       if (descriptor.type !== 'commit') state = result
+      if (descriptor.type === 'remove' && selectedId === descriptor.penId)
+        selectedId = null
     }
     await closeModal()
     render()
+    if (descriptor.type === 'add')
+      app.querySelector('.pen-row.selected')?.focus()
   })
 })
 
 document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && modal?.creating && !busy) {
+    event.preventDefault()
+    closeModal().catch(showError)
+    return
+  }
   if (!modal || event.key !== 'Tab') return
   const focusable = [
     ...modalRoot.querySelectorAll('button:not(:disabled),input,textarea')
@@ -356,6 +592,19 @@ document.addEventListener('keydown', (event) => {
 })
 
 api.subscribe((message) => {
+  if (message.type === 'shutdown') {
+    shuttingDown = true
+    busy = true
+    modal = null
+    clearTimeout(toastTimer)
+    const toast = document.querySelector('#toast')
+    toast.textContent = ''
+    toast.classList.remove('visible')
+    modalRoot.replaceChildren()
+    app.innerHTML = PenViews.shutdown()
+    return
+  }
+  if (shuttingDown) return
   if (message.type === 'state') {
     state = message.state
     render()
@@ -377,6 +626,7 @@ async function boot() {
     render()
     if (state.dialog) openModal(state.dialog)
   } catch (error) {
+    if (shuttingDown) return
     app.innerHTML = PenViews.bootError(error)
     app.querySelector('#retry').addEventListener('click', boot)
   }

@@ -1,19 +1,4 @@
 const PenViews = (() => {
-  const paths = {
-    settings:
-      '<path d="m9 3-1 3-3 1-2 3 2 3 3 1 1 3h4l1-3 3-1 2-3-2-3-3-1-1-3Z"/><circle cx="11" cy="10" r="3"/>',
-    plus: '<path d="M12 5v14M5 12h14"/>',
-    arrow: '<path d="M5 12h14m-5-5 5 5-5 5"/>',
-    close: '<path d="m6 6 12 12M6 18 18 6"/>',
-    pen: '<path d="m5 16-1 4 4-1L20 7l-3-3Z M14 7l3 3"/>',
-    check: '<path d="m5 12 4 4L19 6"/>',
-    request: '<path d="M7 4h9l4 4v13H4V4h3m8 0v5h5M8 13h8m-8 4h5"/>',
-    eye: '<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/>',
-    more: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
-    lock: '<rect x="6" y="10" width="12" height="11" rx="3"/><path d="M9 10V6a3 3 0 0 1 6 0v4"/>'
-  }
-  const icon = (name) =>
-    `<svg viewBox="0 0 24 24" aria-hidden="true">${paths[name] || paths.pen}</svg>`
   const esc = (value = '') =>
     String(value ?? '').replace(
       /[&<>"']/g,
@@ -31,20 +16,27 @@ const PenViews = (() => {
   const initial = (name) => (name || 'P').trim().slice(0, 1).toUpperCase()
   const activeRequest = (pen) =>
     pen?.request?.status === 'open' ? pen.request : null
+  const knownQuorum = (pen) =>
+    pen.signers?.length ? activeRequest(pen)?.quorum || pen.quorum : 0
+  const avatar = (pen) =>
+    `<span class="pen-avatar">${pen.image ? `<img src="${esc(pen.image)}" alt="" />` : icon('pencil-outline')}</span>`
 
   function field(name, label, placeholder, options = {}) {
     const {
       area = false,
       required = true,
       type = 'text',
+      autocomplete = 'off',
+      readOnly = false,
       value = '',
       note = '',
       file = false
     } = options
-    const attributes = `name="${name}" placeholder="${esc(placeholder)}" ${required ? 'required' : ''}`
+    const attributes = `name="${name}" placeholder="${esc(placeholder)}" autocomplete="${autocomplete}" ${required ? 'required' : ''} ${readOnly ? 'readonly' : ''}`
     const input = area
       ? `<textarea ${attributes} spellcheck="false">${esc(value)}</textarea>`
-      : `<input class="input" ${attributes} type="${type}" value="${esc(value)}" autocomplete="off"
+      : `<input class="input" ${attributes} type="${type}" value="${esc(value)}"
+          ${autocomplete === 'username' ? 'maxlength="120" spellcheck="false" autocapitalize="none"' : ''}
           ${type === 'number' ? 'min="1" step="1" inputmode="numeric"' : ''} />`
     return `<label class="field">
       <span class="field-label">${esc(label)}
@@ -55,76 +47,91 @@ const PenViews = (() => {
     </label>`
   }
 
-  function onboarding() {
+  function onboarding(suggestedName) {
     return `<main class="onboarding">
-      <form class="onboarding-form">
+      <form class="onboarding-form" method="post" autocomplete="on">
         <img class="onboarding-icon" src="../assets/mark.svg" alt="" />
         <h1>Pear Pen</h1>
-        ${field('name', 'Name', 'Optional', { required: false })}
+        ${field('username', 'Username (enter to customize)', suggestedName, { autocomplete: 'username', required: false })}
+        <div data-key-password>${onboardingPassword(false)}</div>
         <details class="key-import">
-          <summary>Import keys <small>Optional</small></summary>
+          <summary>Import keys <small>Optional</small>${icon('chevron-down')}</summary>
           ${field('publicKey', 'Public key', 'Paste or choose a file', { area: true, file: true, required: false })}
           ${field('secretKey', 'Private key', 'Paste or choose a file', { area: true, file: true, required: false })}
-          <div data-key-password hidden>
-            ${field('password', 'Key password', 'If encrypted', { type: 'password', required: false })}
-          </div>
         </details>
-        <p class="field-note">New keys are created automatically if you skip import.</p>
+        <p class="key-backup-note" role="note">After setup, export your keys from Settings and keep a backup. Your password alone can’t recover a lost private key.</p>
         <div class="form-error" role="alert"></div>
-        <button class="primary full" type="submit">Continue ${icon('arrow')}</button>
+        <button class="primary full" type="submit">Continue ${icon('chevron-forward')}</button>
       </form>
     </main>`
   }
 
-  function penRow(pen, selectedId) {
+  function onboardingPassword(importing) {
+    return field(
+      'password',
+      importing ? 'Key password' : 'Create password',
+      importing ? 'If your key is encrypted' : 'Used when you sign',
+      {
+        type: 'password',
+        autocomplete: importing ? 'current-password' : 'new-password',
+        required: !importing
+      }
+    )
+  }
+
+  function penRow(pen, selectedId, mode) {
     const request = activeRequest(pen)
-    let summary = 'No open request'
-    if (request)
-      summary = `${request.signatures.length} of ${request.quorum} signatures`
-    if (pen.quorumMismatch)
-      summary = `Drive quorum ${pen.quorum} · entered ${pen.configuredQuorum}`
+    const quorum = knownQuorum(pen)
+    let summary = pen.activity.at(-1)?.text || 'No open request'
+    if (request) {
+      summary =
+        quorum > 0
+          ? `${request.signatures.length}/${quorum} signatures · Request open`
+          : 'Request open'
+    }
     return `<button class="pen-row ${pen.id === selectedId ? 'selected' : ''}" data-pen="${esc(pen.id)}"
         ${pen.id === selectedId ? 'aria-current="page"' : ''}>
-      <span class="pen-avatar">${esc(initial(pen.name))}</span>
-      <span class="pen-row-copy"><strong>${esc(pen.name)}</strong><small>${esc(summary)}</small></span>
-      ${request ? '<span class="dot"></span>' : ''}
+      ${avatar(pen)}
+      <span class="pen-row-copy"><strong title="${esc(pen.name)}">${esc(pen.name)}</strong><small>${esc(summary)}</small>
+        ${mode === 'manual' && pen.quorumMismatch ? `<small>Drive quorum is ${pen.quorum} (entered ${pen.configuredQuorum}).</small>` : ''}
+      </span>
     </button>`
   }
 
-  function shell(state, selectedId, update) {
-    const pen = state.pens.find((item) => item.id === selectedId)
+  function shell() {
     return `<main class="shell">
       <aside class="sidebar">
         <div class="titlebar"></div>
         <header class="brand">
           <div class="brand-title"><img src="../assets/mark.svg" alt="" />Pear Pen</div>
-          <button class="icon-button" data-action="settings" aria-label="Settings">${icon('settings')}</button>
+          <button class="icon-button" data-action="settings" aria-label="Settings">${icon('settings-outline')}</button>
         </header>
-        <div class="sidebar-label"><span class="eyebrow">YOUR PENS</span><span>${state.pens.length}</span></div>
-        <nav class="pen-list" aria-label="Pens">
-          ${state.pens.length ? state.pens.map((item) => penRow(item, selectedId)).join('') : '<p class="sidebar-empty">Add a pen to start signing.</p>'}
-        </nav>
-        <footer class="sidebar-bottom">
-          <button class="add-pen" data-action="add"><span>+</span>Add a pen</button>
-          <div class="identity">
-            <span class="identity-avatar">${esc(initial(state.profile.name))}</span>
-            <span class="identity-copy">
-              <strong>${esc(state.profile.name || 'Your signing identity')}</strong>
-              <small>${esc(short(state.profile.publicKey))}</small>
-            </span>
-            <span class="dot" title="Signing identity ready"></span>
-          </div>
-        </footer>
+        <button type="button" class="primary add-pen" data-action="add">${icon('add')}Add a pen</button>
+        <div class="sidebar-label"><span class="eyebrow">YOUR PENS</span><span data-pen-count></span></div>
+        <nav class="pen-list" aria-label="Pens"></nav>
+        <footer class="sidebar-bottom"></footer>
       </aside>
       <section class="workspace">
-        <header class="workspace-bar">
-          <div class="breadcrumbs">Your pens ${pen ? `<span>/</span><span>${esc(pen.name)}</span>` : ''}</div>
-          <div class="status-pill"><span class="dot"></span>${state.settings.mode === 'automatic' ? 'Automatic mode' : 'Manual mode'}</div>
-        </header>
-        ${updateBanner(update)}
-        ${pen ? detail(pen, state) : emptyWorkspace()}
+        <header class="workspace-bar"></header>
+        <div class="update-slot"></div>
+        <div class="workspace-content"></div>
       </section>
     </main>`
+  }
+
+  function identity(profile) {
+    return `<div class="identity">
+      <span class="identity-avatar">${esc(initial(profile.name))}</span>
+      <span class="identity-copy">
+        <strong>${esc(profile.name || 'Your signing identity')}</strong>
+        <small>${esc(short(profile.publicKey))}</small>
+      </span>
+    </div>`
+  }
+
+  function workspaceBar(pen, mode) {
+    return `<div class="breadcrumbs">Your pens ${pen ? `<span>/</span><span title="${esc(pen.name)}">${esc(pen.name)}</span>` : ''}</div>
+      <div class="status-pill" data-mode="${esc(mode)}">${mode === 'manual' ? 'Manual mode' : 'Automatic mode'}</div>`
   }
 
   function updateBanner(update) {
@@ -137,18 +144,17 @@ const PenViews = (() => {
     }
     if (!labels[update.status]) return ''
     return `<div class="update-banner" role="status">
-      ${esc(labels[update.status])}
+      ${icon('arrow-down-circle-outline')}${esc(labels[update.status])}
       ${update.status === 'available' ? '<button data-action="apply-update">Install & restart</button>' : ''}
     </div>`
   }
 
   function emptyWorkspace() {
     return `<div class="empty-workspace">
-      <div class="empty-mark"><img src="../assets/mark.svg" alt="" /></div>
-      <h1>Your pens.</h1>
+      <div class="empty-mark">${icon('pencil-outline')}</div>
+      <h1>No pens yet</h1>
       <p>Add a multisig drive to start signing.</p>
-      <button class="primary" data-action="add">${icon('plus')} Add your first pen</button>
-      <div class="empty-foot">${icon('lock')} Peer to peer. Keys stay on your device.</div>
+      <button class="primary" data-action="add">${icon('add')} Add your first pen</button>
     </div>`
   }
 
@@ -162,61 +168,61 @@ const PenViews = (() => {
       <div class="request-top">
         <div><div class="eyebrow">CURRENT REQUEST</div><h3>${request ? 'Source drive' : 'No open request'}</h3>${description ? `<p>${description}</p>` : ''}</div>
         ${
-          request
+          quorum > 0
             ? `<div class="quorum">
-          <strong>${request.signatures.length}<span> / ${quorum}</span></strong><small>signatures</small>
-          <div class="signer-dots">${Array.from({ length: Math.min(quorum, 15) }, (_, i) => `<i class="${i < request.signatures.length ? 'signed' : ''}"></i>`).join('')}</div>
+          <strong>${request?.signatures.length || 0}<span> / ${quorum}</span></strong><small>signatures</small>
         </div>`
-            : `<span class="event-symbol">${icon('pen')}</span>`
+            : ''
         }
       </div>
       ${
         request
           ? `<button class="copy-key key" data-action="copy-source" title="Copy source key">${esc(request.srcKey)}</button>
-        <button class="text-button request-copy" data-action="copy-signing-request">Copy request</button>`
+        <button class="text-button request-copy" data-action="copy-signing-request">${icon('copy-outline')} Copy request</button>`
           : ''
       }
     </section>`
   }
 
-  function signingActions(pen, state) {
+  function signingActions(request, state, reached) {
     if (state.settings.mode === 'manual')
-      return `<button class="primary" data-action="manual">Signing actions ${icon('arrow')}</button>`
-    const request = activeRequest(pen)
+      return `<button class="primary" data-action="manual">Signing actions ${icon('chevron-forward')}</button>`
     if (!request)
-      return `<button class="primary" data-action="request">${icon('plus')} New request</button>`
-    if (request.signatures.length >= request.quorum)
-      return `<button class="secondary" data-action="review">${icon('eye')} Review</button>
-        ${request.creator === state.profile.publicKey ? `<button class="primary" data-action="commit">Commit ${icon('check')}</button>` : ''}`
+      return `<button class="primary" data-action="request">${icon('add')} New request</button>`
+    if (reached) {
+      const creator = request.creator === state.profile.publicKey
+      return `<button class="${creator ? 'secondary' : 'primary'}" data-action="review">${icon('reader-outline')} Review</button>
+        ${creator ? `<button class="primary" data-action="commit">Commit ${icon('checkmark-done-outline')}</button>` : ''}`
+    }
     const signed = request.signatures.includes(state.profile.publicKey)
     return `<button class="primary" data-action="${signed ? 'copy-response' : 'sign'}" data-request="${esc(request.id)}">
-        ${icon(signed ? 'check' : 'pen')}${signed ? 'Copy response' : 'Sign request'}
-      </button>
-      <button class="secondary" data-action="request" aria-label="Replace current request" title="Open a new request">${icon('plus')}</button>`
+        ${icon(signed ? 'copy-outline' : 'pencil-outline')}${signed ? 'Copy response' : 'Sign request'}
+      </button>`
   }
 
   function detail(pen, state) {
     const request = activeRequest(pen)
-    const quorum = request?.quorum || pen.quorum
+    const quorum = knownQuorum(pen)
     const reached = request && quorum > 0 && request.signatures.length >= quorum
     return `<div class="detail">
       <header class="detail-heading">
-        <span class="pen-avatar">${esc(initial(pen.name))}</span>
+        ${avatar(pen)}
         <div class="heading-copy">
-          <h1 title="${esc(pen.name)}">${esc(pen.name)}</h1>
+          <h1><button class="pen-title" data-action="pen-info" title="Pen details">${esc(pen.name)}</button></h1>
           <p><button class="text-button" data-action="copy-drive" title="Copy full multisig drive key">${esc(short(pen.multisigKey))}</button> · ${pen.peers} peers connected</p>
         </div>
-        <button class="icon-button" data-action="pen-info" aria-label="Pen details">${icon('more')}</button>
+        <button class="icon-button" data-action="pen-info" aria-label="Pen details" title="Pen details">${icon('information-circle-outline')}</button>
       </header>
       ${pen.quorumMismatch ? `<p class="quorum-note" role="status">This drive requires ${pen.quorum} signatures; you entered ${pen.configuredQuorum}.</p>` : ''}
       ${requestCard(request, quorum, reached)}
-      <div class="section-heading"><span class="eyebrow">ACTIVITY</span><span>${pen.activity.length}</span></div>
+      <div class="section-heading"><span class="eyebrow">ACTIVITY</span>
+        ${request && state.settings.mode === 'automatic' ? `<button class="text-button" data-action="request">${icon('add')} New request</button>` : ''}
+      </div>
       <div class="activity" role="log" aria-label="Signing activity">
-        ${pen.activity.length ? pen.activity.map((event) => activityEvent(event, state.profile)).join('') : '<p class="activity-empty">Requests and signatures will appear here.</p>'}
+        ${pen.activity.length ? pen.activity.map((event) => activityEvent(event, state.profile)).join('') : `<p class="activity-empty">${icon('leaf-outline')}No activity yet.</p>`}
       </div>
       <footer class="detail-footer">
-        <p class="footer-hint">Requests and signatures<br />sync with your fellow signers.</p>
-        <div class="footer-actions">${signingActions(pen, state)}</div>
+        <div class="footer-actions">${signingActions(request, state, reached)}</div>
       </footer>
     </div>`
   }
@@ -224,29 +230,31 @@ const PenViews = (() => {
   function activityEvent(event, profile) {
     const author =
       event.author === profile.publicKey
-        ? profile.name || 'You'
-        : event.authorName || short(event.author)
+        ? profile.name || event.authorName || 'You'
+        : event.authorName || (event.author ? 'Signer' : 'Pear Pen')
+    const sharedBy =
+      event.sharedBy === profile.publicKey
+        ? profile.name || event.sharedByName || 'You'
+        : event.sharedByName || 'Signer'
     const date = new Date(event.at)
     const time = Number.isNaN(date.getTime())
       ? ''
       : date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     const symbols = {
-      request: 'request',
-      response: 'pen',
-      commit: 'check',
-      review: 'eye',
-      unanswered: 'close'
+      response: 'pencil-outline',
+      commit: 'checkmark-done-outline'
     }
     return `<article class="event">
-      <div class="event-symbol">${icon(symbols[event.type] || 'pen')}</div>
+      <div class="event-symbol">${icon(symbols[event.type] || 'document-text-outline')}</div>
       <div class="event-copy">
-        <div class="event-top"><strong>${esc(author)}</strong><time title="${esc(date.toLocaleString())}">${esc(time)}</time></div>
+        <div class="event-top"><span class="event-author"><strong>${esc(author)}</strong>${event.author ? `<span class="event-author-key" title="${esc(event.author)}">${esc(short(event.author))}</span>` : ''}</span><time title="${esc(date.toLocaleString())}">${esc(time)}</time></div>
         <p>${esc(event.text || event.type)}</p>
         ${event.srcKey ? `<div class="event-key key">${esc(event.srcKey)}</div>` : ''}
-        ${event.sharedBy && event.sharedBy !== event.author ? `<small class="event-relay">Shared by ${esc(event.sharedBy === profile.publicKey ? 'you' : short(event.sharedBy))}</small>` : ''}
+        ${event.sharedBy && event.sharedBy !== event.author ? `<small class="event-relay">Shared by ${esc(sharedBy)} · ${esc(short(event.sharedBy))}</small>` : ''}
         <div class="activity-actions">
-          ${event.response ? `<button class="text-button activity-copy" data-action="activity-output" data-payload="response" data-event="${esc(event.id)}">Copy response</button>` : ''}
-          ${event.request ? `<button class="text-button activity-copy" data-action="activity-output" data-payload="request" data-event="${esc(event.id)}">Copy request</button>` : ''}
+          ${event.response ? `<button class="text-button activity-copy" data-action="activity-output" data-payload="response" data-event="${esc(event.id)}">${icon('copy-outline')} Copy response</button>` : ''}
+          ${event.request ? `<button class="text-button activity-copy" data-action="activity-output" data-payload="request" data-event="${esc(event.id)}">${icon('copy-outline')} Copy request</button>` : ''}
+          ${event.response && event.request && event.author ? `<button class="text-button activity-copy" data-action="activity-verify" data-event="${esc(event.id)}">${icon('checkmark-circle-outline')} Verify</button>` : ''}
         </div>
       </div>
     </article>`
@@ -255,13 +263,13 @@ const PenViews = (() => {
   function setting(name, label, values, selected) {
     return `<div class="setting">
       <div class="setting-title">${label}</div>
-      <div class="segmented">${values.map((value) => `<button type="button" data-setting="${name}" data-value="${value}" class="${selected === value ? 'active' : ''}">${value[0].toUpperCase() + value.slice(1)}</button>`).join('')}</div>
+      <div class="segmented">${values.map((value) => `<button type="button" data-setting="${name}" data-value="${value}" aria-pressed="${selected === value}" class="${selected === value ? 'active' : ''}">${value[0].toUpperCase() + value.slice(1)}</button>`).join('')}</div>
     </div>`
   }
 
   function settings(state, version) {
     return `<div class="setting">
-        <label class="setting-title" for="settings-name">Your name ${icon('pen')}</label>
+        <label class="setting-title" for="settings-name">Your name ${icon('pencil-outline')}</label>
         <div class="name-edit">
           <input id="settings-name" class="input" name="name" value="${esc(state.profile.name)}" placeholder="Optional" />
           <button class="secondary" type="button" data-save-name>Save</button>
@@ -269,7 +277,7 @@ const PenViews = (() => {
       </div>
       ${setting('theme', 'Appearance', ['system', 'light', 'dark'], state.settings.theme)}
       ${setting('mode', 'Signing mode', ['automatic', 'manual'], state.settings.mode)}
-      <p class="field-note">Both modes sync. Manual mode also accepts pasted requests and responses.</p>
+      <p class="field-note">${state.settings.mode === 'manual' ? 'Exchange requests and responses yourself. Your signing activity still syncs with connected peers.' : 'Requests and signatures sync with connected peers, including manual signers.'}</p>
       <div class="setting">
         <div class="setting-title">Your public key</div>
         <button type="button" class="settings-key" data-copy-public>${esc(state.profile.publicKey)}</button>
@@ -278,40 +286,50 @@ const PenViews = (() => {
         <button type="button" class="secondary full" data-export-key="public">Export public key</button>
         <button type="button" class="secondary full" data-export-key="private">Export private key</button>
       </div>
+      <div class="settings-links">
+        <button type="button" role="link" class="text-button" data-help="privacy">Privacy policy <span aria-hidden="true">↗</span></button>
+        <button type="button" role="link" class="text-button" data-help="support">Support <span aria-hidden="true">↗</span></button>
+      </div>
       <p class="field-note">Pear Pen ${esc(version)}</p>`
   }
 
-  function manualFields(method, pen, profile) {
-    let body = ''
-    if (method !== 'response')
-      body += field('srcKey', 'Source drive key', 'Paste the full source key', {
-        area: true,
-        value: pen.request?.srcKey || ''
-      })
-    if (method !== 'request')
-      body += field('request', 'Signing request', 'Paste the signing request', {
-        area: true,
-        value: pen.request?.request || ''
-      })
-    if (['review', 'commit'].includes(method))
-      body += field(
-        'responses',
-        'Responses',
-        'Additional responses, one per line (optional)',
-        { area: true, required: false }
-      )
-    if (method === 'response' && profile.encrypted) body += passwordField()
-    if (method === 'commit') body += confirmationField()
-    return body
+  function requestDetails(snapshot) {
+    const entries = [
+      ['Destination key', snapshot.key],
+      ['Fork', snapshot.fork],
+      ['Metadata length', snapshot.length],
+      ['Metadata tree hash', snapshot.treeHash],
+      ['Content length', snapshot.content.length],
+      ['Content tree hash', snapshot.content.treeHash]
+    ]
+    return `<dl class="request-details">${entries
+      .map(([label, value]) => `<dt>${label}</dt><dd>${esc(value)}</dd>`)
+      .join('')}</dl>`
   }
 
-  const passwordField = () =>
-    field('password', 'Key password', 'If encrypted', {
-      type: 'password',
-      required: false
-    })
+  function signingCredentials(profile) {
+    return (
+      field('username', 'Username', '', {
+        autocomplete: 'username',
+        value: profile.username || profile.name || profile.publicKey,
+        readOnly: true
+      }) +
+      field('password', 'Key password', 'Enter your password', {
+        type: 'password',
+        autocomplete: 'current-password'
+      })
+    )
+  }
   const confirmationField = () =>
     field('confirmation', 'Type COMMIT to confirm', 'COMMIT')
+
+  function penFacts(pen) {
+    const quorum = knownQuorum(pen)
+    return `<dl class="pen-facts">
+      ${quorum > 0 ? `<div><dt>Quorum</dt><dd>${quorum}</dd></div>` : ''}
+      <div><dt>Connected peers</dt><dd>${pen.peers}</dd></div>
+    </dl>${pen.quorumMismatch ? `<p class="field-note">Drive quorum is ${pen.quorum} (entered ${pen.configuredQuorum}).</p>` : ''}`
+  }
 
   function dialog(modal, state, version) {
     const pen = state.pens.find((item) => item.id === modal.penId)
@@ -323,8 +341,8 @@ const PenViews = (() => {
     switch (modal.type) {
       case 'output':
         title = modal.title
-        body = `<button type="button" class="output-copy" data-copy-output aria-label="Copy result">${esc(modal.output)}</button>
-          <p class="output-hint" role="status">Click to copy. This stays here until you close it.</p>`
+        body = `${modal.details ? requestDetails(modal.details) : ''}<button type="button" class="output-copy" data-copy-output aria-label="Copy result">${esc(modal.output)}</button>
+          <p class="output-hint" role="status">${icon('copy-outline')} Click to copy. This stays here until you close it.</p>`
         action =
           '<button type="button" class="primary full" data-close>Close</button>'
         break
@@ -340,7 +358,7 @@ const PenViews = (() => {
       case 'key-export':
         title = modal.kind === 'private' ? 'Private key' : 'Public key'
         body = `<button type="button" class="output-copy" data-copy-key aria-label="Copy key">${esc(modal.key)}</button>
-          <p class="output-hint" role="status">Click to copy</p>`
+          <p class="output-hint" role="status">${icon('copy-outline')} Click to copy</p>`
         action =
           '<button type="button" class="secondary" data-close>Close</button><button type="button" class="primary" data-save-key>Save file</button>'
         break
@@ -353,45 +371,60 @@ const PenViews = (() => {
       case 'add':
         title = 'Add a pen'
         body =
-          field('name', 'Pen name', 'A name for this pen') +
+          '<div class="segmented creation-mode"><button type="button" class="active" data-add-mode="link">Link</button><button type="button" data-add-mode="config">Configuration</button></div>' +
           field(
             'multisigKey',
             'Multisig drive key',
             'Paste a multisig key or pear:// link',
-            { area: true }
+            { area: true, value: modal.link || '' }
           ) +
-          field('quorum', 'Quorum', 'Automatic', {
-            type: 'number',
-            required: false,
-            note: 'Required signatures. Verified from the drive.'
+          field('name', 'Pen name (optional)', 'Defaults to the drive link', {
+            value: modal.name || '',
+            required: false
           }) +
-          '<button type="button" class="text-button" data-help>Find your multisig key ↗</button>'
+          '<p class="field-note">You can sign or review an existing request without adding a configuration. To create a request, Pear Pen can use /pear.json at the root of the source drive or the configuration in Pen details.</p>' +
+          `<button type="button" class="text-button" data-help>${icon('help-circle-outline')} Find your multisig key</button>`
         action = '<button type="submit" class="primary">Add pen</button>'
         break
       case 'manual':
-        title = 'Signing actions'
-        intro = pen.name
-        body = `<div class="action-menu">${['request', 'response', 'review', 'commit'].map((method) => `<button type="button" data-manual="${method}"><span>${method[0].toUpperCase() + method.slice(1)}</span>${icon('arrow')}</button>`).join('')}</div>`
+        title = pen.name
+        body = `<div class="action-menu">
+          <button type="button" data-pen-info>${icon('information-circle-outline')}<span>Pen details</span>${icon('chevron-forward')}</button>
+          ${Object.entries({
+            request: 'add-circle-outline',
+            sign: 'pencil-outline',
+            submitResponse: 'send-outline',
+            verify: 'checkmark-circle-outline',
+            review: 'reader-outline',
+            commit: 'checkmark-done-outline'
+          })
+            .map(
+              ([method, symbol]) =>
+                `<button type="button" data-manual="${method}">${icon(symbol)}<span>${PenManual.titles[method]}</span>${icon('chevron-forward')}</button>`
+            )
+            .join('')}</div>`
         action =
           '<button type="button" class="secondary full" data-close>Cancel</button>'
         break
-      case 'manual-action':
-        title = {
-          request: 'Request',
-          response: 'Response',
-          review: 'Review',
-          commit: 'Commit'
-        }[modal.method]
-        body = manualFields(modal.method, pen, state.profile)
-        action = `<button type="submit" class="primary">${title}</button>`
+      case 'manual-action': {
+        const page = PenManual.render(modal, state.profile, {
+          field,
+          esc,
+          signingCredentials,
+          details: requestDetails
+        })
+        title = page.title
+        body = page.body
+        action = page.action
         break
+      }
       case 'request':
         title = 'New request'
         if (activeRequest(pen))
           intro = 'This closes the current request as unanswered.'
         body = field(
           'srcKey',
-          'Source drive key',
+          'Source drive',
           'Paste the full source key or pear:// link',
           { area: true }
         )
@@ -402,7 +435,7 @@ const PenViews = (() => {
         intro = 'Your signature approves this exact source snapshot.'
         body = `<div class="review-output key">${esc(modal.srcKey)}</div>
           <p class="field-note">Confirm the source with your fellow signers.</p><br />
-          ${state.profile.encrypted ? passwordField() : ''}`
+          ${state.profile.encrypted ? signingCredentials(state.profile) : ''}`
         action = '<button type="submit" class="primary">Sign request</button>'
         break
       case 'commit':
@@ -412,30 +445,39 @@ const PenViews = (() => {
         action = '<button type="submit" class="primary">Commit release</button>'
         break
       case 'remove':
-        title = 'Remove this pen?'
-        intro = 'Your saved activity will be available if you add it again.'
+        title = 'Remove pen from this device?'
+        intro = `${pen.name}. You can add it again with its multisig link.`
         action =
-          '<button type="button" class="secondary" data-cancel-remove>Keep pen</button><button type="submit" class="danger">Remove pen</button>'
+          '<button type="button" class="secondary" data-cancel-remove>Cancel</button><button type="submit" class="danger">Remove</button>'
         break
       case 'pen-info':
-        title = pen.name
-        body = `<span class="field-label">Multisig drive key</span>
-          <button type="button" class="output-copy" data-copy-drive>${esc(pen.multisigKey)}</button>
-          <p class="field-note">${pen.quorum || '—'} ${pen.signers.length ? 'signatures required' : 'expected signatures'} · ${pen.peers} peers connected
-            ${pen.quorumMismatch ? `<br />You entered ${pen.configuredQuorum}; the drive requires ${pen.quorum}.` : ''}
-          </p><br />
-          <button class="secondary full" type="button" data-new-request>Open a new request</button><br /><br />
-          <button class="danger full" type="button" data-remove>Remove pen from this device</button>`
+        title = 'Pen details'
+        body = `<div class="pen-image-controls">${avatar(pen)}<button type="button" class="secondary" data-choose-image>${pen.image ? 'Change image' : 'Choose image'}</button>${pen.image ? '<button type="button" class="text-button" data-remove-image>Remove image</button>' : ''}</div>
+          ${pen.name !== `pear://${pen.multisigKey}` ? `<div class="field"><span class="field-label">Name</span><strong class="pen-detail-name">${esc(pen.name)}</strong></div>` : ''}
+          <span class="field-label">Multisig drive link</span>
+          <button type="button" class="output-copy" data-copy-drive aria-label="Copy multisig link">pear://${esc(pen.multisigKey)}</button>
+          <p class="output-hint">Click to copy</p>
+          <div data-pen-facts>${penFacts(pen)}</div>
+          <p class="field-note">Read from the source automatically, or import its pear.json.</p>
+          <div class="pen-detail-actions">
+            <button type="button" class="secondary full" data-edit-config>Configuration ${icon('chevron-forward')}</button>
+            <button class="danger full" type="button" data-remove>Remove pen from this device</button>
+          </div>`
+        break
+      case 'configuration':
+        title = modal.creating ? 'Add a pen' : 'Configuration'
+        body = `${modal.creating ? '<div class="segmented creation-mode"><button type="button" data-add-mode="link">Link</button><button type="button" class="active" data-add-mode="config">Configuration</button></div>' : ''}${PenConfiguration.render(modal)}`
+        action = `<button type="button" class="secondary" ${modal.creating ? 'data-add-mode="link"' : 'data-pen-info'}>${icon('chevron-back')} Back</button><button type="submit" class="primary">${modal.preview && !modal.preview.changed ? (modal.creating ? 'Add pen' : 'Save configuration') : 'Preview configuration'}</button>`
         break
     }
     return `<div class="modal-backdrop">
-      <section class="modal ${modal.type === 'output' ? 'wide' : ''}" role="dialog" aria-modal="true" aria-labelledby="modal-title">
-        <form>
+      <section class="modal ${['output', 'configuration'].includes(modal.type) ? 'wide' : ''}" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+        <form method="post">
           <header class="modal-head">
             <h2 id="modal-title">${esc(title)}</h2>
             ${modal.type === 'output' ? '' : `<button type="button" class="icon-button" data-close aria-label="Close">${icon('close')}</button>`}
           </header>
-          <p class="intro">${esc(intro)}</p>
+          ${intro ? `<p class="intro">${esc(intro)}</p>` : ''}
           ${body}
           <div class="form-error" role="alert"></div>
           <footer class="modal-actions">${action}</footer>
@@ -452,5 +494,28 @@ const PenViews = (() => {
     </div>`
   }
 
-  return { activeRequest, onboarding, shell, dialog, bootError }
+  function shutdown() {
+    return `<section class="shutdown" role="status">
+      <img src="../assets/mark.svg" alt="" />
+      <h1>Shutting down…</h1>
+      <p>Quit again to close immediately.</p>
+    </section>`
+  }
+
+  return {
+    activeRequest,
+    onboarding,
+    onboardingPassword,
+    shell,
+    penRow,
+    penFacts,
+    identity,
+    workspaceBar,
+    updateBanner,
+    emptyWorkspace,
+    detail,
+    dialog,
+    bootError,
+    shutdown
+  }
 })()

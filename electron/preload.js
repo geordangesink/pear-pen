@@ -4,10 +4,11 @@ contextBridge.exposeInMainWorld('pen', {
   request: (method, params = {}) =>
     ipcRenderer.invoke('pen:request', method, params),
   copy: (value) => ipcRenderer.invoke('pen:copy', value),
-  importFile: () => ipcRenderer.invoke('pen:importFile'),
+  importFile: (kind) => ipcRenderer.invoke('pen:importFile', kind),
+  chooseImage: () => ipcRenderer.invoke('pen:chooseImage'),
   saveKey: (exportId) => ipcRenderer.invoke('pen:saveKey', exportId),
   clearExport: (exportId) => ipcRenderer.invoke('pen:clearExport', exportId),
-  openHelp: () => ipcRenderer.invoke('pen:openHelp'),
+  openHelp: (topic) => ipcRenderer.invoke('pen:openHelp', topic),
   applyUpdate: () => ipcRenderer.invoke('pen:applyUpdate'),
   version: () => ipcRenderer.invoke('pen:version'),
   subscribe: (listener) => {

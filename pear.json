@@ -1,0 +1,9 @@
+{
+  "multisig": {
+    "namespace": "pear-pen-desktop/desktop",
+    "publicKeys": [
+      "sh9st5zthf9boqe6xjpk95nz86job9u4innexezi5qmduaz51ihy"
+    ],
+    "quorum": 1
+  }
+}
