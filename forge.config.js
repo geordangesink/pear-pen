@@ -1,7 +1,22 @@
 const fs = require('fs')
 const path = require('path')
+const { execFileSync } = require('child_process')
 const { parse } = require('pear-link')
 const pkg = require('./package.json')
+
+function prepareDmg() {
+  for (const name of ['macos-alias', 'fs-xattr']) {
+    const cwd = path.dirname(require.resolve(`${name}/package.json`))
+    try {
+      require(name)
+    } catch (error) {
+      if (!['MODULE_NOT_FOUND', 'ERR_DLOPEN_FAILED'].includes(error.code))
+        throw error
+      execFileSync('node-gyp', ['rebuild'], { cwd, stdio: 'inherit' })
+    }
+  }
+  return {}
+}
 
 function getWindowsKitVersion() {
   const programFiles =
@@ -41,7 +56,11 @@ module.exports = {
     ]
   },
   makers: [
-    { name: '@electron-forge/maker-dmg', platforms: ['darwin'], config: {} },
+    {
+      name: '@electron-forge/maker-dmg',
+      platforms: ['darwin'],
+      config: prepareDmg
+    },
     { name: '@electron-forge/maker-zip', platforms: ['darwin'], config: {} },
     {
       name: '@electron-forge/maker-msix',
