@@ -1,26 +1,38 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
   <defs>
-    <mask id="halo" x="0" y="0" width="1024" height="1024" maskUnits="userSpaceOnUse" maskContentUnits="userSpaceOnUse" style="mask-type:luminance">
+    <path id="ink" d="M424 750C394 785 339 792 329 825C318 860 363 877 391 850C424 818 416 798 398 821C369 858 398 897 449 887C498 877 528 841 546 850C564 859 540 883 560 889C587 898 627 854 703 860" />
+    <path id="barrel" d="M-27-264Q-27-282-10-282H10Q27-282 27-264L25 76L18 108L34 171L0 272L-34 171L-18 108L-25 76Z" />
+    <mask id="pen-cutouts" maskUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024" style="mask-type:luminance">
       <rect width="1024" height="1024" fill="white" />
-      <g transform="translate(512 512) scale(0.72) translate(-512 -512)" fill="black" stroke="black" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M424 750C394 785 339 792 329 825C318 860 363 877 391 850C424 818 416 798 398 821C369 858 398 897 449 887C498 877 528 841 546 850C564 859 540 883 560 889C587 898 627 854 703 860" fill="none" stroke-width="24" />
-        <path transform="translate(606 548) rotate(42)" d="M-27-264Q-27-282-10-282H10Q27-282 27-264L25 76L18 108L34 171L0 272L-34 171L-18 108L-25 76Z" stroke-width="44" />
+      <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+        <use href="#ink" stroke="black" stroke-width="13" />
+        <g transform="translate(606 548) rotate(42)">
+          <use href="#barrel" fill="white" stroke="black" stroke-width="14" />
+          <path d="M-26-187H26M-25 76H25M-19 104H19" stroke="black" stroke-width="7" />
+          <path d="M14-251V-214Q14-205 6-205" stroke="black" stroke-width="6" />
+          <circle cy="171" r="5" fill="black" />
+          <path d="M0 176V260" stroke="black" stroke-width="6" />
+        </g>
+        <use href="#ink" stroke="white" stroke-width="5" />
       </g>
     </mask>
   </defs>
-  <g mask="url(#halo)">
-    <rect x="96" y="96" width="832" height="832" rx="208" fill="#17191f" />
-    <path transform="translate(512 512) scale(0.72) translate(-512 -512)" fill="#b0d944" d="M494 159h37v69H494ZM513 238h36v13H513ZM475 251h74v14H475ZM437 265h150v17H437ZM513 292h112v13H513ZM400 305h225v31H400ZM513 346h149v13H513ZM362 359h300v31H362ZM513 399h149v14H513ZM362 413h300v31H362ZM513 453h187v14H513ZM325 467h375v30H325ZM513 507h187v13H513ZM325 520h375v31H325ZM513 561h224v13H513ZM287 574h450v31H287ZM513 615h262v13H513ZM249 628h526v31H249ZM513 669h262v13H513ZM249 682h526v31H249ZM513 722h262v14H513ZM249 736h526v31H249ZM513 776h187v14H513ZM325 790h375v30H325ZM513 830h112v13H513ZM400 843h225v22H400Z" />
-  </g>
-  <g transform="translate(512 512) scale(0.72) translate(-512 -512)" stroke="black" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M424 750C394 785 339 792 329 825C318 860 363 877 391 850C424 818 416 798 398 821C369 858 398 897 449 887C498 877 528 841 546 850C564 859 540 883 560 889C587 898 627 854 703 860" fill="none" stroke-width="13" />
-    <path d="M424 750C394 785 339 792 329 825C318 860 363 877 391 850C424 818 416 798 398 821C369 858 398 897 449 887C498 877 528 841 546 850C564 859 540 883 560 889C587 898 627 854 703 860" fill="none" stroke="#f8f9f5" stroke-width="5" />
-    <g transform="translate(606 548) rotate(42)">
-      <path d="M-27-264Q-27-282-10-282H10Q27-282 27-264L25 76L18 108L34 171L0 272L-34 171L-18 108L-25 76Z" fill="#f8f9f5" stroke-width="14" />
-      <path d="M-26-187H26M-25 76H25M-19 104H19" fill="none" stroke-width="7" />
-      <path d="M14-251V-214Q14-205 6-205" fill="none" stroke-width="6" />
-      <circle cy="171" r="5" fill="black" stroke="none" />
-      <path d="M0 176V260" fill="none" stroke-width="6" />
-    </g>
+  <rect x="96" y="96" width="832" height="832" rx="208" fill="#17191f" />
+  <g transform="translate(512 512) scale(0.72) translate(-512 -512)" mask="url(#pen-cutouts)">
+    <path fill="#b0d944" d="M494 159h37v69h-37Z
+      M513 238h36v27h38v17H437v-17h38v-14h38Z
+      M400 305h49v31h-49Z M595 292h30v44h-49v-31h19Z
+      M362 359h49v31h-49Z M632 346h30v44h-49v-31h19Z
+      M362 413h30v31h-30Z M632 399h30v45h-30Z
+      M325 467h49v30h-49Z M670 453h30v44h-49v-30h19Z
+      M325 520h30v31h-30Z M670 507h30v44h-30Z
+      M287 574h49v31h-49Z M707 561h30v44h-49v-31h19Z
+      M249 628h49v31h-49Z M745 615h30v44h-49v-31h19Z
+      M249 682h30v31h-30Z M745 669h30v44h-30Z
+      M249 736h30v31h-30Z M745 722h30v45h-30Z
+      M325 790h82v30h-82Z M670 776h30v44h-81v-30h51Z
+      M580 830h45v35H400v-22h180Z" />
+    <use href="#ink" fill="none" stroke="#f8f9f5" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" />
+    <use href="#barrel" transform="translate(606 548) rotate(42)" fill="#f8f9f5" />
   </g>
 </svg>
